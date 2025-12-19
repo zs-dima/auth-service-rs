@@ -1,0 +1,32 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Environment files
+.env
+*.env
+
+# Never commit environment files with real credentials!
+# Check your development.env before committing!
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Generated files
+src/api/grpc/attribution.rs
+
+# Test output
+*.profraw
+*.profdata
+
+# Local config overrides
+configs/local.toml

@@ -1,0 +1,42 @@
+
+
+default_job = "check"
+
+[jobs.check]
+command = ["cargo", "check", "--color", "always", "--all-targets", "--all-features"]
+need_stdout = false
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--all-targets", "--color", "always", "--all-features"]
+need_stdout = false
+
+[jobs.test]
+command = ["cargo", "nextest", "run", "--color", "always"]
+need_stdout = true
+
+[jobs.test-vanilla]
+command = ["cargo", "test", "--color", "always"]
+need_stdout = true
+
+[jobs.doc]
+command = ["cargo", "doc", "--color", "always", "--no-deps", "--all-features"]
+need_stdout = false
+
+[jobs.run]
+# command = ["cargo", "run", "--color", "always"]
+# env = { "DOTENV_PATH" = "configs/development.env" }
+command = ["powershell", "-Command", "Get-Content configs/development.env | ForEach-Object { if ($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }; cargo run --color always"]
+need_stdout = true
+watch = ["src", "Cargo.toml", "configs"]
+
+[jobs.expand]
+command = ["cargo", "expand", "--color", "always"]
+need_stdout = true
+
+[keybindings]
+t = "job:test"
+r = "job:run"
+c = "job:check"
+l = "job:clippy"
+d = "job:doc"
+e = "job:expand"
