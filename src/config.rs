@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use clap::Parser;
+use secrecy::SecretString;
 
 /// Authentication gRPC service configuration
 #[derive(Debug, Clone, Parser)]
@@ -26,9 +27,9 @@ pub struct Config {
     #[arg(long, env = "GRPC_API_REFLECTION", default_value = "false")]
     pub grpc_reflection: bool,
 
-    /// JWT secret key for signing tokens
+    /// JWT secret key for signing tokens (protected from accidental exposure)
     #[arg(long, env = "JWT_SECRET_KEY")]
-    pub jwt_secret_key: String,
+    pub jwt_secret_key: SecretString,
 
     /// Access token TTL in minutes (default: 15 minutes)
     #[arg(long, env = "ACCESS_TOKEN_TTL_MINUTES", default_value = "15")]
@@ -73,6 +74,10 @@ pub struct Config {
     /// Concurrency limit: max concurrent requests
     #[arg(long, env = "CONCURRENCY_LIMIT", default_value = "100")]
     pub rate_limit_rps: u64,
+
+    /// Maximum photo upload size in bytes (default: 2MB)
+    #[arg(long, env = "MAX_PHOTO_BYTES", default_value = "2097152")]
+    pub max_photo_bytes: usize,
 }
 
 /// Configuration validation errors
@@ -104,7 +109,8 @@ impl Config {
 
     /// Validate configuration values
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.jwt_secret_key.len() < 32 {
+        use secrecy::ExposeSecret;
+        if self.jwt_secret_key.expose_secret().len() < 32 {
             return Err(ConfigError::JwtSecretTooShort);
         }
         if self.access_token_ttl_minutes == 0 {
@@ -144,7 +150,7 @@ mod tests {
             grpc_web: true,
             cors_allow_origins: None,
             grpc_reflection: false,
-            jwt_secret_key: "this_is_a_very_long_secret_key_32".to_string(),
+            jwt_secret_key: SecretString::from("this_is_a_very_long_secret_key_32".to_string()),
             access_token_ttl_minutes: 15,
             refresh_token_ttl_days: 7,
             db_url: "postgres://localhost/auth".to_string(),
@@ -156,6 +162,7 @@ mod tests {
             json_logs: false,
             otlp_endpoint: None,
             rate_limit_rps: 100,
+            max_photo_bytes: 2 * 1024 * 1024,
         }
     }
 
@@ -174,7 +181,7 @@ mod tests {
     #[test]
     fn test_jwt_secret_too_short() {
         let mut config = valid_config();
-        config.jwt_secret_key = "short".to_string();
+        config.jwt_secret_key = SecretString::from("short".to_string());
         assert!(matches!(
             config.validate(),
             Err(ConfigError::JwtSecretTooShort)

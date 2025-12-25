@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
 use axum::{Json, Router, routing::get};
 use http::{Method, header};
 use metrics_exporter_prometheus::PrometheusHandle;
+use secrecy::ExposeSecret;
 use serde::Serialize;
 use tokio::signal;
 use tonic::transport::Server;
@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = create_pool(&config).await?;
     info!("Connected to database");
 
-    let database = Arc::new(Database::new(pool));
+    let database = Database::new(pool);
 
     // Parse gRPC address
     let grpc_addr: SocketAddr = config.grpc_address.parse()?;
@@ -80,9 +80,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Create auth service config (only what the service needs)
     let auth_service_config = AuthServiceConfig {
-        jwt_secret_key: config.jwt_secret_key.clone(),
+        jwt_secret_key: config.jwt_secret_key.expose_secret().to_string(),
         access_token_ttl_minutes: config.access_token_ttl_minutes,
         refresh_token_ttl_days: config.refresh_token_ttl_days,
+        max_photo_bytes: config.max_photo_bytes,
     };
 
     let auth_service = AuthServiceImpl::new(auth_service_config, database.clone());
@@ -102,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
         // Concurrency limiting
         .layer(ConcurrencyLimitLayer::new(config.rate_limit_rps as usize))
         // JWT authentication
-        .layer(JwtAuthLayer::new(&config.jwt_secret_key))
+        .layer(JwtAuthLayer::new(config.jwt_secret_key.expose_secret()))
         // Request timeout
         .timeout(Duration::from_secs(30))
         .into_inner();
@@ -194,11 +195,7 @@ fn build_cors_layer(origins: Option<&str>) -> Option<CorsLayer> {
 }
 
 /// Build HTTP router for health, metrics, and file operations
-fn build_http_router(
-    db: Arc<Database>,
-    cors: Option<CorsLayer>,
-    metrics: PrometheusHandle,
-) -> Router {
+fn build_http_router(db: Database, cors: Option<CorsLayer>, metrics: PrometheusHandle) -> Router {
     let router = Router::new()
         .route("/health", get(health_handler))
         .route("/ready", get(readiness_handler))
@@ -218,7 +215,7 @@ async fn health_handler() -> &'static str {
 }
 
 /// Readiness probe - checks database connectivity
-async fn readiness_handler(State(db): State<Arc<Database>>) -> Json<HealthResponse> {
+async fn readiness_handler(State(db): State<Database>) -> Json<HealthResponse> {
     let db_healthy = db.health_check().await;
 
     Json(HealthResponse {

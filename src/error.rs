@@ -45,8 +45,14 @@ impl From<AppError> for Status {
     }
 }
 
-/// Result type alias for the application
-pub type AppResult<T> = Result<T, AppError>;
+impl AppError {
+    /// Convert to unauthenticated status with warning log (for auth failures)
+    /// Use for invalid credentials - hides internal details from client
+    pub fn to_auth_status(self, context: &str) -> Status {
+        tracing::warn!(error = %self, "{}", context);
+        Status::unauthenticated("Invalid credentials")
+    }
+}
 
 /// Extension trait for converting errors to Status with logging
 pub trait StatusExt<T> {

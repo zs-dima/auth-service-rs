@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::sync::Arc;
 
 use async_stream::try_stream;
 use image::ImageFormat;
@@ -31,12 +30,7 @@ pub struct AuthServiceConfig {
     pub jwt_secret_key: String,
     pub access_token_ttl_minutes: u64,
     pub refresh_token_ttl_days: i64,
-}
-
-/// Auth service implementation
-pub struct AuthServiceImpl {
-    config: AuthServiceConfig,
-    db: Arc<Database>,
+    pub max_photo_bytes: usize,
 }
 
 /// Session tokens (access + refresh)
@@ -45,10 +39,14 @@ struct SessionTokens {
     refresh_token: String,
 }
 
-impl AuthServiceImpl {
-    const MAX_PHOTO_BYTES: usize = 2 * 1024 * 1024;
+/// Auth service implementation
+pub struct AuthServiceImpl {
+    config: AuthServiceConfig,
+    db: Database,
+}
 
-    pub fn new(config: AuthServiceConfig, db: Arc<Database>) -> Self {
+impl AuthServiceImpl {
+    pub fn new(config: AuthServiceConfig, db: Database) -> Self {
         Self { config, db }
     }
 
@@ -628,10 +626,11 @@ impl AuthService for AuthServiceImpl {
             .photo
             .ok_or_else(|| Status::invalid_argument("Photo data is required"))?;
 
-        if photo_data.len() > Self::MAX_PHOTO_BYTES {
+        if photo_data.len() > self.config.max_photo_bytes {
             warn!(
                 user_id = %target_user_id,
                 size = photo_data.len(),
+                max = self.config.max_photo_bytes,
                 "Photo exceeds maximum size"
             );
             return Err(Status::invalid_argument(
