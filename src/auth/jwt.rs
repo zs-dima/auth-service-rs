@@ -47,6 +47,7 @@ pub struct JwtUserInfo {
     pub id: Uuid,
     pub role: UserRole,
     pub email: String,
+    #[allow(dead_code)]
     pub name: String,
 }
 

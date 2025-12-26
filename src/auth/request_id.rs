@@ -116,6 +116,7 @@ where
 }
 
 /// Extract request ID from tonic Request extensions
+#[allow(dead_code)]
 pub fn get_request_id<T>(request: &tonic::Request<T>) -> Option<&RequestId> {
     request.extensions().get::<RequestId>()
 }

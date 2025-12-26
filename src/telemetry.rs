@@ -3,12 +3,11 @@
 use std::time::Duration;
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use opentelemetry::{KeyValue, trace::TracerProvider};
+use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     Resource,
-    runtime::Tokio,
-    trace::{Sampler, TracerProvider as SdkTracerProvider},
+    trace::{Sampler, SdkTracerProvider},
 };
 use tracing::Level;
 use tracing_subscriber::fmt::time::ChronoLocal;
@@ -39,10 +38,12 @@ pub fn init_opentelemetry(otlp_endpoint: Option<&str>) -> Option<SdkTracerProvid
         .build()
         .expect("Failed to create OTLP exporter");
 
-    let resource = Resource::new(vec![KeyValue::new("service.name", SERVICE_NAME)]);
+    let resource = Resource::builder()
+        .with_attributes([KeyValue::new("service.name", SERVICE_NAME)])
+        .build();
 
     let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter, Tokio)
+        .with_batch_exporter(exporter)
         .with_sampler(Sampler::AlwaysOn)
         .with_resource(resource)
         .build();
@@ -91,8 +92,8 @@ pub fn setup_telemetry(config: &Config) -> Option<SdkTracerProvider> {
     };
 
     // Initialize subscriber
-    if let Some(ref provider) = otel_provider {
-        let tracer = provider.tracer(SERVICE_NAME);
+    if otel_provider.is_some() {
+        let tracer = opentelemetry::global::tracer(SERVICE_NAME);
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
         tracing_subscriber::registry()

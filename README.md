@@ -43,20 +43,26 @@ A high-performance authentication gRPC service written in Rust.
 
 Environment variables (see [src/config.rs](src/config.rs)):
 
-| Variable              | Required | Description                                    |
-| --------------------- | -------- | ---------------------------------------------- |
-| `GRPC_ADDRESS`        | No       | gRPC server address (default: `0.0.0.0:50051`) |
-| `HTTP_ADDRESS`        | No       | HTTP server for file ops (e.g. `0.0.0.0:8080`) |
-| `GRPC_WEB`            | No       | Enable gRPC-Web (HTTP/1.1) (`true`/`false`)    |
-| `CORS_ALLOW_ORIGINS`  | No       | CORS origins (comma-separated or `*`)          |
-| `JWT_SECRET_KEY`      | Yes      | Secret key for JWT signing                     |
-| `DB_URL`              | Yes      | PostgreSQL connection URL                      |
-| `DB_POOL_MIN`         | No       | Database pool min size                         |
-| `DB_POOL_MAX`         | No       | Database pool max size                         |
-| `DB_CONNECT_TIMEOUT`  | No       | DB connect timeout (seconds)                   |
-| `GRPC_API_REFLECTION` | No       | Enable gRPC reflection                         |
-| `LOG_LEVEL`           | No       | Log level (TRACE, DEBUG, INFO, WARN, ERROR)    |
-| `LOG_HUMAN`           | No       | Human-readable logs (`true`/`false`)           |
+| Variable                   | Required | Description                                     |
+| -------------------------- | -------- | ----------------------------------------------- |
+| `GRPC_ADDRESS`             | No       | gRPC server address (default: `0.0.0.0:50051`)  |
+| `HTTP_ADDRESS`             | No       | HTTP server for file ops (e.g. `0.0.0.0:8080`)  |
+| `GRPC_WEB`                 | No       | Enable gRPC-Web (HTTP/1.1) (`true`/`false`)     |
+| `CORS_ALLOW_ORIGINS`       | No       | CORS origins (comma-separated or `*`)           |
+| `JWT_SECRET_KEY`           | Yes      | Secret key for JWT signing (min 32 chars)       |
+| `ACCESS_TOKEN_TTL_MINUTES` | No       | Access token lifetime (default: `15`)           |
+| `REFRESH_TOKEN_TTL_DAYS`   | No       | Refresh token lifetime (default: `7`)           |
+| `DB_URL`                   | Yes      | PostgreSQL connection URL                       |
+| `DB_PASSWORD`              | No       | Database password (URL-encoded into DB_URL)     |
+| `DB_POOL_MIN`              | No       | Database pool min size (default: `2`)           |
+| `DB_POOL_MAX`              | No       | Database pool max size (default: `10`)          |
+| `DB_CONNECT_TIMEOUT`       | No       | DB connect timeout in seconds (default: `30`)   |
+| `GRPC_API_REFLECTION`      | No       | Enable gRPC reflection (`true`/`false`)         |
+| `CONCURRENCY_LIMIT`        | No       | Max concurrent requests (default: `100`)        |
+| `MAX_PHOTO_BYTES`          | No       | Max photo upload size in bytes (default: `2MB`) |
+| `LOG_LEVEL`                | No       | Log level (TRACE, DEBUG, INFO, WARN, ERROR)     |
+| `JSON_LOGS`                | No       | Use JSON log format (default: `true`)           |
+| `OTLP_ENDPOINT`            | No       | OpenTelemetry OTLP endpoint for tracing         |
 
 ## Debugging (no Envoy)
 

@@ -129,6 +129,7 @@ impl Config {
     }
 
     /// Get access token TTL as Duration
+    #[allow(dead_code)]
     pub fn access_token_ttl(&self) -> Duration {
         Duration::from_secs(self.access_token_ttl_minutes * 60)
     }

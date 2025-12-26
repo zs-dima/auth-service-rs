@@ -19,16 +19,23 @@ impl UserRepository {
 
     /// Get an active user by email
     pub async fn get_active_user(&self, email: &str) -> Result<User, AppError> {
-        sqlx::query_as::<_, User>(
+        sqlx::query_as!(
+            User,
             r#"
-            SELECT id, role, name, email, password, blurhash, deleted_at
+            SELECT id,
+                   role AS "role: UserRole",
+                   name,
+                   email,
+                   password,
+                   blurhash,
+                   deleted_at
               FROM "user"
              WHERE email = $1
                AND (deleted_at IS NULL OR deleted_at > NOW())
              LIMIT 1
             "#,
+            email
         )
-        .bind(email)
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("User not found: {}", email)))
@@ -36,15 +43,22 @@ impl UserRepository {
 
     /// Get a user by ID (regardless of deleted status)
     pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<User, AppError> {
-        sqlx::query_as::<_, User>(
+        sqlx::query_as!(
+            User,
             r#"
-            SELECT id, role, name, email, password, blurhash, deleted_at
+            SELECT id,
+                   role AS "role: UserRole",
+                   name,
+                   email,
+                   password,
+                   blurhash,
+                   deleted_at
               FROM "user"
              WHERE id = $1
              LIMIT 1
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("User not found: {}", user_id)))
@@ -52,38 +66,41 @@ impl UserRepository {
 
     /// Load a single user's info with deleted status flag
     pub async fn get_user_info(&self, user_id: Uuid) -> Result<UserInfo, AppError> {
-        sqlx::query_as::<_, UserInfo>(
+        sqlx::query_as!(
+            UserInfo,
             r#"
             SELECT id,
-                   role,
+                   role AS "role: UserRole",
                    name,
                    email,
                    blurhash,
-                   (deleted_at IS NOT NULL AND deleted_at < NOW()) AS deleted
+                   (deleted_at IS NOT NULL AND deleted_at < NOW()) AS "deleted!"
               FROM "user"
              WHERE id = $1
              LIMIT 1
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("User not found: {}", user_id)))
     }
 
     /// Load all users with deleted status
+    #[allow(dead_code)]
     pub async fn load_users(&self) -> Result<Vec<UserInfo>, AppError> {
-        sqlx::query_as::<_, UserInfo>(
+        sqlx::query_as!(
+            UserInfo,
             r#"
             SELECT id,
-                   role,
+                   role AS "role: UserRole",
                    name,
                    email,
                    blurhash,
-                   (deleted_at IS NOT NULL AND deleted_at < NOW()) AS deleted
+                   (deleted_at IS NOT NULL AND deleted_at < NOW()) AS "deleted!"
               FROM "user"
              ORDER BY name
-            "#,
+            "#
         )
         .fetch_all(&self.pool)
         .await
@@ -98,19 +115,19 @@ impl UserRepository {
             None
         };
 
-        sqlx::query_scalar::<_, Uuid>(
+        sqlx::query_scalar!(
             r#"
             INSERT INTO "user" (id, role, name, email, password, deleted_at)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
             "#,
+            params.id,
+            params.role as UserRole,
+            &params.name,
+            &params.email,
+            &params.password,
+            deleted_at
         )
-        .bind(params.id)
-        .bind(params.role)
-        .bind(&params.name)
-        .bind(&params.email)
-        .bind(&params.password)
-        .bind(deleted_at)
         .fetch_one(&self.pool)
         .await
         .map_err(Into::into)
@@ -124,7 +141,7 @@ impl UserRepository {
             None
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE "user"
                SET role = $2,
@@ -133,12 +150,12 @@ impl UserRepository {
                    deleted_at = $5
              WHERE id = $1
             "#,
+            params.id,
+            params.role as UserRole,
+            &params.name,
+            &params.email,
+            deleted_at
         )
-        .bind(params.id)
-        .bind(params.role)
-        .bind(&params.name)
-        .bind(&params.email)
-        .bind(deleted_at)
         .execute(&self.pool)
         .await?;
 
@@ -151,15 +168,15 @@ impl UserRepository {
         email: &str,
         password_hash: &str,
     ) -> Result<(), AppError> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE "user"
                SET password = $2
              WHERE email = $1
             "#,
+            email,
+            password_hash
         )
-        .bind(email)
-        .bind(password_hash)
         .execute(&self.pool)
         .await?;
 
@@ -171,20 +188,21 @@ impl UserRepository {
     }
 
     /// Update user blurhash
+    #[allow(dead_code)]
     pub async fn update_user_blurhash(
         &self,
         user_id: Uuid,
         blurhash: Option<&str>,
     ) -> Result<(), AppError> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE "user"
                SET blurhash = $2
              WHERE id = $1
             "#,
+            user_id,
+            blurhash
         )
-        .bind(user_id)
-        .bind(blurhash)
         .execute(&self.pool)
         .await?;
 
@@ -192,15 +210,16 @@ impl UserRepository {
     }
 
     /// Delete a user (soft delete)
+    #[allow(dead_code)]
     pub async fn delete_user(&self, user_id: Uuid) -> Result<(), AppError> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE "user"
                SET deleted_at = NOW()
              WHERE id = $1
             "#,
+            user_id
         )
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -211,17 +230,18 @@ impl UserRepository {
     pub fn stream_all_users(
         &self,
     ) -> impl tokio_stream::Stream<Item = Result<UserInfo, sqlx::Error>> + '_ {
-        sqlx::query_as::<_, UserInfo>(
+        sqlx::query_as!(
+            UserInfo,
             r#"
             SELECT id,
-                   role,
+                   role AS "role: UserRole",
                    name,
                    email,
                    blurhash,
-                   (deleted_at IS NOT NULL AND deleted_at < NOW()) AS deleted
+                   (deleted_at IS NOT NULL AND deleted_at < NOW()) AS "deleted!"
               FROM "user"
              ORDER BY name
-            "#,
+            "#
         )
         .fetch(&self.pool)
     }
@@ -240,7 +260,7 @@ impl SessionRepository {
 
     /// Save or update user session
     pub async fn save_user_session(&self, params: SaveUserSessionParams) -> Result<(), AppError> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO user_session (user_id, refresh_token, expires_at)
             VALUES ($1, $2, $3)
@@ -248,10 +268,10 @@ impl SessionRepository {
                 refresh_token = excluded.refresh_token,
                 expires_at = excluded.expires_at
             "#,
+            params.user_id,
+            &params.refresh_token,
+            params.expires_at
         )
-        .bind(params.user_id)
-        .bind(&params.refresh_token)
-        .bind(params.expires_at)
         .execute(&self.pool)
         .await?;
 
@@ -260,15 +280,15 @@ impl SessionRepository {
 
     /// End user session
     pub async fn end_user_session(&self, user_id: Uuid) -> Result<(), AppError> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE user_session
                SET refresh_token = '',
                    expires_at = NOW()
              WHERE user_id = $1
             "#,
+            user_id
         )
-        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -277,15 +297,15 @@ impl SessionRepository {
 
     /// Load refresh token for a user
     pub async fn load_refresh_token(&self, user_id: Uuid) -> Result<String, AppError> {
-        sqlx::query_scalar::<_, String>(
+        sqlx::query_scalar!(
             r#"
             SELECT refresh_token
               FROM user_session
              WHERE user_id = $1
                AND expires_at > NOW()
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| AppError::NotFound("Session not found or expired".to_string()))
@@ -312,14 +332,16 @@ impl PhotoRepository {
         let mut tx = self.pool.begin().await?;
 
         // Update blurhash on user table
-        sqlx::query(r#"UPDATE "user" SET blurhash = $2 WHERE id = $1"#)
-            .bind(params.user_id)
-            .bind(blurhash)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            r#"UPDATE "user" SET blurhash = $2 WHERE id = $1"#,
+            params.user_id,
+            blurhash
+        )
+        .execute(&mut *tx)
+        .await?;
 
         // Upsert photo
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO user_photo (user_id, avatar, photo)
             VALUES ($1, $2, $3)
@@ -327,10 +349,10 @@ impl PhotoRepository {
                 avatar = excluded.avatar,
                 photo = excluded.photo
             "#,
+            params.user_id,
+            &params.avatar,
+            &params.photo
         )
-        .bind(params.user_id)
-        .bind(&params.avatar)
-        .bind(&params.photo)
         .execute(&mut *tx)
         .await?;
 
@@ -340,26 +362,29 @@ impl PhotoRepository {
 
     /// Load user avatars for given user IDs
     pub async fn load_user_avatars(&self, user_ids: &[Uuid]) -> Result<Vec<UserAvatar>, AppError> {
-        sqlx::query_as::<_, UserAvatar>(
+        sqlx::query_as!(
+            UserAvatar,
             r#"
             SELECT user_id, avatar
               FROM user_photo
              WHERE user_id = ANY($1)
             "#,
+            user_ids
         )
-        .bind(user_ids)
         .fetch_all(&self.pool)
         .await
         .map_err(Into::into)
     }
 
     /// Load all user avatars
+    #[allow(dead_code)]
     pub async fn load_all_avatars(&self) -> Result<Vec<UserAvatar>, AppError> {
-        sqlx::query_as::<_, UserAvatar>(
+        sqlx::query_as!(
+            UserAvatar,
             r#"
             SELECT user_id, avatar
               FROM user_photo
-            "#,
+            "#
         )
         .fetch_all(&self.pool)
         .await
@@ -387,13 +412,14 @@ impl Database {
     }
 
     /// Get the underlying connection pool
+    #[allow(dead_code)]
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
     /// Check database health by executing a simple query
     pub async fn health_check(&self) -> bool {
-        sqlx::query_scalar::<_, i32>("SELECT 1")
+        sqlx::query_scalar!("SELECT 1 AS one")
             .fetch_one(&self.pool)
             .await
             .is_ok()

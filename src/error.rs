@@ -60,9 +60,11 @@ pub trait StatusExt<T> {
     fn status(self, msg: &'static str) -> Result<T, Status>;
 
     /// Map error to Status::unauthenticated with logging
+    #[allow(dead_code)]
     fn status_unauthenticated(self, msg: &'static str) -> Result<T, Status>;
 
     /// Map error to Status::not_found with logging
+    #[allow(dead_code)]
     fn status_not_found(self, msg: &'static str) -> Result<T, Status>;
 }
 

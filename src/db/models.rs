@@ -113,6 +113,7 @@ impl From<UserInfo> for crate::proto::auth::User {
 }
 
 /// User session model for refresh tokens
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct UserSession {
     pub user_id: Uuid,
@@ -121,6 +122,7 @@ pub struct UserSession {
 }
 
 /// User photo model
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct UserPhoto {
     pub user_id: Uuid,
