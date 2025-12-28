@@ -361,6 +361,56 @@ impl AuthService for AuthServiceImpl {
         Ok(Response::new(ResultReply { result: true }))
     }
 
+    /// Load user info for a specific user
+    #[instrument(skip(self, request), fields(user_id, target_user_id))]
+    async fn load_user_info(
+        &self,
+        request: Request<UserId>,
+    ) -> Result<Response<ProtoUserInfo>, Status> {
+        let auth_info = require_auth(&request)?;
+        let req = request.into_inner();
+        req.validate_or_status()?;
+
+        let target_user_id = req.id.as_ref().parse_or_status_with_field("user_id")?;
+        let is_admin = auth_info.user_info.role == DbUserRole::Administrator;
+
+        tracing::Span::current().record("user_id", auth_info.user_info.id.to_string());
+        tracing::Span::current().record("target_user_id", target_user_id.to_string());
+
+        if !is_admin && auth_info.user_info.id != target_user_id {
+            warn!(
+                user_id = %auth_info.user_info.id,
+                target_user_id = %target_user_id,
+                "Unauthorized user info lookup"
+            );
+            return Err(Status::permission_denied("Cannot load other user's info"));
+        }
+
+        debug!(
+            user_id = %auth_info.user_info.id,
+            target_user_id = %target_user_id,
+            "Loading user info"
+        );
+
+        let user_info =
+            self.db
+                .users
+                .get_user_info(target_user_id)
+                .await
+                .map_err(|error| match &error {
+                    AppError::NotFound(_) => {
+                        warn!(user_id = %target_user_id, "Requested user not found");
+                        Status::not_found("User not found")
+                    }
+                    _ => {
+                        error!(user_id = %target_user_id, error = %error, "Failed to load user info");
+                        Status::from(error)
+                    }
+                })?;
+
+        Ok(Response::new(ProtoUserInfo::from(user_info)))
+    }
+
     type LoadUsersInfoStream = StreamResult<ProtoUserInfo>;
 
     /// Load user info for all users (streaming) - requires admin

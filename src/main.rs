@@ -176,20 +176,23 @@ fn build_cors_layer(origins: Option<&str>) -> Option<CorsLayer> {
     };
 
     Some(
-        cors.allow_headers([
-            header::AUTHORIZATION,
-            header::CONTENT_TYPE,
-            header::ACCEPT,
-            "x-grpc-web".parse().unwrap(),
-            "x-user-agent".parse().unwrap(),
-            "x-request-id".parse().unwrap(),
-        ])
+        // cors.allow_headers([
+        //     header::AUTHORIZATION,
+        //     header::CONTENT_TYPE,
+        //     header::ACCEPT,
+        //     "x-grpc-web".parse().unwrap(),
+        //     "x-user-agent".parse().unwrap(),
+        //     "x-request-id".parse().unwrap(),
+        // ])
+        cors.allow_headers(Any)
         .expose_headers([
             "grpc-status".parse().unwrap(),
             "grpc-message".parse().unwrap(),
             "x-request-id".parse().unwrap(),
         ])
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_origin(Any)
+        .allow_methods(Any)
+        // .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .max_age(Duration::from_secs(3600)),
     )
 }

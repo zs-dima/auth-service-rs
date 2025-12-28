@@ -17,6 +17,7 @@ service AuthService {
   rpc ResetPassword(ResetPasswordRequest) returns (core.ResultReply);
   rpc SetPassword(SetPasswordRequest) returns (core.ResultReply);
 
+  rpc LoadUserInfo(UserId) returns (UserInfo);
   rpc LoadUsersInfo(google.protobuf.Empty) returns (stream UserInfo);
   rpc LoadUserAvatar(LoadUserAvatarRequest) returns (stream UserAvatar);
   rpc LoadUsers(UserId) returns (stream User);
@@ -59,13 +60,13 @@ message OsInfo {
 }
 
 enum OS {
-  fuchsia = 0;
-  linux   = 1;
-  macOS   = 2;
-  windows = 3;
-  iOS     = 4;
-  android = 5;
-  unknown = 6;
+  FUCHSIA = 0;
+  LINUX   = 1;
+  MACOS   = 2;
+  WINDOWS = 3;
+  IOS     = 4;
+  ANDROID = 5;
+  UNKNOWN = 6;
 }
 
 message RefreshTokenRequest {
@@ -87,8 +88,8 @@ message AuthInfo {
 }
 
 enum UserRole {
-  administrator = 0;
-  user          = 1;
+  ADMINISTRATOR = 0;
+  USER          = 1;
 }
 
 message UserInfo {
