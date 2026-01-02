@@ -19,24 +19,24 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{Level, info};
 
+mod auth;
 #[path = "_core/mod.rs"]
 mod core;
-mod auth;
 mod db;
-mod middleware;
+mod middlewares;
 mod proto;
-mod service;
-mod util;
+mod services;
+mod tools;
 
 use core::{
     config::Config,
     telemetry::{init_metrics, setup_telemetry, shutdown_telemetry},
 };
 use db::{Database, create_pool};
-use middleware::{AuthLayer, RequestIdLayer};
+use middlewares::{AuthLayer, RequestIdLayer};
 use proto::auth::auth_service_server::AuthServiceServer;
-use service::{AuthServiceConfig, AuthServiceImpl};
-use util::{S3Config, S3Storage};
+use services::{AuthServiceConfig, AuthServiceImpl};
+use tools::{S3Config, S3Storage};
 
 /// Build version (injected at compile time or default)
 const VERSION: &str = env!("CARGO_PKG_VERSION");

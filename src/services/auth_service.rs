@@ -26,7 +26,7 @@ use crate::proto::auth::{
     UserId, UserInfo as ProtoUserInfo,
 };
 use crate::proto::core::ResultReply;
-use crate::util::S3Storage;
+use crate::tools::S3Storage;
 
 // Upload URL expiration, 5 min.
 const UPLOAD_URL_EXPIRES_SECS: u64 = 300;
