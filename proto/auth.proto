@@ -55,19 +55,19 @@ message DeviceInfo {
 }
 
 message OsInfo {
-  OS     os      = 1;
+  string os      = 1;
   string version = 2;
 }
 
-enum OS {
-  FUCHSIA = 0;
-  LINUX   = 1;
-  MACOS   = 2;
-  WINDOWS = 3;
-  IOS     = 4;
-  ANDROID = 5;
-  UNKNOWN = 6;
-}
+// enum OS {
+//   FUCHSIA = 0;
+//   LINUX   = 1;
+//   MACOS   = 2;
+//   WINDOWS = 3;
+//   IOS     = 4;
+//   ANDROID = 5;
+//   UNKNOWN = 6;
+// }
 
 message RefreshTokenRequest {
   string refresh_token = 1 [(validate.rules).string.min_len = 1];
