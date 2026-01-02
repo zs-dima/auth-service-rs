@@ -1,0 +1,19 @@
+<!-- .\mc.exe cors set MINIO/auth-avatars ./s3-cors.xml -->
+<CORSConfiguration>
+  <CORSRule>
+    <AllowedOrigin>https://dmitrii.app</AllowedOrigin>
+    <AllowedOrigin>https://*.dmitrii.app</AllowedOrigin>
+
+    <!-- local development -->
+    <AllowedOrigin>http://localhost:8008</AllowedOrigin>
+    <AllowedOrigin>http://127.0.0.1:8008</AllowedOrigin>
+    <AllowedOrigin>http://10.0.2.2:8008</AllowedOrigin> <!-- Android emulator -->
+
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <!-- <AllowedMethod>PUT</AllowedMethod> upload from browser -->
+    <AllowedHeader>*</AllowedHeader>
+    <ExposeHeader>ETag</ExposeHeader>
+    <MaxAgeSeconds>3000</MaxAgeSeconds>
+  </CORSRule>
+</CORSConfiguration>

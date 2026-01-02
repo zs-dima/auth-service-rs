@@ -1,22 +1,23 @@
 use chrono::{Duration, Utc};
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{EncodingKey, Header, encode};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::db::models::{User, UserRole};
-use crate::error::AppError;
+use crate::core::error::AppError;
+use crate::db::models::User;
 
 /// JWT issuer identifier
 pub const ISSUER: &str = "auth-service";
 /// JWT audience identifier
 pub const AUDIENCE: &str = "auth-service";
-/// Length of refresh token in bytes
+/// Length of refresh token in bytes (256 bits of entropy)
 const REFRESH_TOKEN_BYTES: usize = 32;
 
-/// JWT claims structure
+/// JWT claims structure following RFC 7519 with custom claims.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
+    // Standard claims (RFC 7519)
     /// Subject (user ID)
     pub sub: String,
     /// Audience
@@ -25,6 +26,14 @@ pub struct Claims {
     pub iss: String,
     /// JWT ID (unique token identifier)
     pub jti: String,
+    /// Expiration time (Unix timestamp)
+    pub exp: i64,
+    /// Issued at time (Unix timestamp)
+    pub iat: i64,
+    /// Not before time (Unix timestamp) - token is not valid before this time
+    pub nbf: i64,
+
+    // Custom claims
     /// User role
     pub role: String,
     /// User email
@@ -35,28 +44,6 @@ pub struct Claims {
     pub device_id: String,
     /// Installation ID
     pub installation_id: String,
-    /// Expiration time (Unix timestamp)
-    pub exp: i64,
-    /// Issued at time (Unix timestamp)
-    pub iat: i64,
-}
-
-/// User info extracted from JWT
-#[derive(Debug, Clone)]
-pub struct JwtUserInfo {
-    pub id: Uuid,
-    pub role: UserRole,
-    pub email: String,
-    #[allow(dead_code)]
-    pub name: String,
-}
-
-/// Full auth info extracted from JWT
-#[derive(Debug, Clone)]
-pub struct JwtAuthInfo {
-    pub user_info: JwtUserInfo,
-    pub device_id: Uuid,
-    pub installation_id: Uuid,
 }
 
 /// Token generator for creating access and refresh tokens
@@ -82,27 +69,29 @@ impl TokenGenerator {
         let expiration = now + Duration::minutes(ttl_minutes as i64);
 
         let claims = Claims {
+            // Standard claims
             sub: user.id.to_string(),
             aud: AUDIENCE.to_string(),
             iss: ISSUER.to_string(),
             jti: Uuid::new_v4().to_string(),
+            exp: expiration.timestamp(),
+            iat: now.timestamp(),
+            nbf: now.timestamp(), // Token valid immediately
+
+            // Custom claims
             role: user.role.to_string(),
             email: user.email.clone(),
             name: user.name.clone(),
             device_id: device_id.to_string(),
             installation_id: installation_id.to_string(),
-            exp: expiration.timestamp(),
-            iat: now.timestamp(),
         };
 
-        let token = encode(
+        encode(
             &Header::default(),
             &claims,
             &EncodingKey::from_secret(jwt_secret_key.as_bytes()),
         )
-        .map_err(|e| AppError::Internal(format!("JWT encoding error: {}", e)))?;
-
-        Ok(token)
+        .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
     }
 
     /// Generate a refresh token (random URL-safe base64 string)
@@ -117,66 +106,21 @@ impl TokenGenerator {
     ) -> Result<(String, chrono::DateTime<Utc>), AppError> {
         let expires_at = Utc::now() + Duration::days(ttl_days);
 
-        let mut token_bytes = [0u8; REFRESH_TOKEN_BYTES];
-        rand::rng().fill_bytes(&mut token_bytes);
+        let mut bytes = [0u8; REFRESH_TOKEN_BYTES];
+        rand::rng().fill_bytes(&mut bytes);
 
-        let token = base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            &token_bytes,
-        );
+        let token =
+            base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes);
 
         Ok((token, expires_at))
-    }
-
-    /// Validate and decode a JWT token
-    pub fn validate_token(token: &str, jwt_secret_key: &str) -> Result<Claims, AppError> {
-        let mut validation = Validation::default();
-        validation.set_audience(&[AUDIENCE]);
-        validation.set_issuer(&[ISSUER]);
-
-        let token_data = decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(jwt_secret_key.as_bytes()),
-            &validation,
-        )
-        .map_err(|e| AppError::Unauthenticated(format!("Invalid token: {}", e)))?;
-
-        Ok(token_data.claims)
-    }
-
-    /// Extract auth info from JWT claims
-    pub fn extract_auth_info(claims: &Claims) -> Result<JwtAuthInfo, AppError> {
-        let user_id = Uuid::parse_str(&claims.sub)
-            .map_err(|_| AppError::Unauthenticated("Invalid user ID in token".to_string()))?;
-
-        let device_id = Uuid::parse_str(&claims.device_id)
-            .map_err(|_| AppError::Unauthenticated("Invalid device ID in token".to_string()))?;
-
-        let installation_id = Uuid::parse_str(&claims.installation_id).map_err(|_| {
-            AppError::Unauthenticated("Invalid installation ID in token".to_string())
-        })?;
-
-        let role = claims
-            .role
-            .parse::<UserRole>()
-            .map_err(|_| AppError::Unauthenticated("Invalid role in token".to_string()))?;
-
-        Ok(JwtAuthInfo {
-            user_info: JwtUserInfo {
-                id: user_id,
-                role,
-                email: claims.email.clone(),
-                name: claims.name.clone(),
-            },
-            device_id,
-            installation_id,
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::models::UserRole;
+    use jsonwebtoken::{DecodingKey, Validation, decode};
 
     fn test_user() -> User {
         User {
@@ -185,7 +129,6 @@ mod tests {
             name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             password: "hash".to_string(),
-            blurhash: None,
             deleted_at: None,
         }
     }
@@ -201,24 +144,35 @@ mod tests {
             TokenGenerator::generate_access_token(&user, &device_id, &installation_id, secret, 15)
                 .unwrap();
 
-        let claims = TokenGenerator::validate_token(&token, secret).unwrap();
-        assert_eq!(claims.email, user.email);
-        assert_eq!(claims.name, user.name);
-        assert_eq!(claims.sub, user.id.to_string());
+        let mut validation = Validation::default();
+        validation.set_audience(&[AUDIENCE]);
+        validation.set_issuer(&[ISSUER]);
+
+        let token_data = decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &validation,
+        )
+        .unwrap();
+
+        assert_eq!(token_data.claims.email, user.email);
+        assert_eq!(token_data.claims.name, user.name);
+        assert_eq!(token_data.claims.sub, user.id.to_string());
     }
 
     #[test]
     fn test_generate_refresh_token() {
         let (token, expires_at) = TokenGenerator::generate_refresh_token(7).unwrap();
+
         assert!(!token.is_empty());
         assert!(expires_at > Utc::now());
-        // Should be URL-safe base64 (no +, /, or =)
+        // URL-safe base64 should not contain +, /, or =
         assert!(!token.contains('+'));
         assert!(!token.contains('/'));
     }
 
     #[test]
-    fn test_extract_auth_info() {
+    fn test_claims_roundtrip() {
         let user = test_user();
         let device_id = Uuid::new_v4();
         let installation_id = Uuid::new_v4();
@@ -228,12 +182,20 @@ mod tests {
             TokenGenerator::generate_access_token(&user, &device_id, &installation_id, secret, 15)
                 .unwrap();
 
-        let claims = TokenGenerator::validate_token(&token, secret).unwrap();
-        let auth_info = TokenGenerator::extract_auth_info(&claims).unwrap();
+        let mut validation = Validation::default();
+        validation.set_audience(&[AUDIENCE]);
+        validation.set_issuer(&[ISSUER]);
 
-        assert_eq!(auth_info.user_info.id, user.id);
-        assert_eq!(auth_info.user_info.email, user.email);
-        assert_eq!(auth_info.device_id, device_id);
-        assert_eq!(auth_info.installation_id, installation_id);
+        let claims = decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &validation,
+        )
+        .unwrap()
+        .claims;
+
+        assert_eq!(claims.sub, user.id.to_string());
+        assert_eq!(claims.device_id, device_id.to_string());
+        assert_eq!(claims.installation_id, installation_id.to_string());
     }
 }

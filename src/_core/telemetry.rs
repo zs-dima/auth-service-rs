@@ -13,7 +13,7 @@ use tracing::Level;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::config::Config;
+use super::config::Config;
 
 /// Service name constant
 const SERVICE_NAME: &str = "auth-service";

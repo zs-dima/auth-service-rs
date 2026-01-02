@@ -3,7 +3,7 @@ use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 /// Password hasher using Argon2id (OWASP recommended)
 pub struct Encryptor;

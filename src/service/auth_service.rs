@@ -1,60 +1,126 @@
+//! Auth service gRPC implementation.
+
 use std::pin::Pin;
+use std::sync::Arc;
 
 use async_stream::try_stream;
-use image::ImageFormat;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::auth::{Encryptor, TokenGenerator, require_admin, require_auth};
+use crate::auth::{Encryptor, TokenGenerator};
+use crate::core::error::{AppError, OptionStatusExt, StatusExt};
+use crate::core::extensions::{ToProtoUuid, UuidExt};
+use crate::core::validation::ValidateExt;
 use crate::db::{
-    CreateUserParams, Database, SaveUserPhotoParams, SaveUserSessionParams, UpdateUserParams, User,
+    CreateUserParams, Database, SaveUserSessionParams, UpdateUserParams, User,
     UserRole as DbUserRole,
 };
-use crate::error::{AppError, StatusExt};
-use crate::extensions::{ToProtoUuid, UuidExt};
+use crate::middleware::AuthInfo as MiddlewareAuthInfo;
 use crate::proto::auth::auth_service_server::AuthService;
 use crate::proto::auth::{
-    AuthInfo, CreateUserRequest, LoadUserAvatarRequest, RefreshTokenReply, RefreshTokenRequest,
+    AuthInfo, AvatarUploadUrl, ConfirmAvatarUploadRequest, CreateUserRequest,
+    GetAvatarUploadUrlRequest, LoadUsersInfoRequest, RefreshTokenReply, RefreshTokenRequest,
     ResetPasswordRequest, SetPasswordRequest, SignInRequest, UpdateUserRequest, User as ProtoUser,
-    UserAvatar as ProtoUserAvatar, UserId, UserInfo as ProtoUserInfo, UserPhoto,
+    UserId, UserInfo as ProtoUserInfo,
 };
 use crate::proto::core::ResultReply;
-use crate::util::to_avatar;
-use crate::validation::ValidateExt;
+use crate::util::S3Storage;
 
-/// Auth service configuration (only what the service needs)
+// Upload URL expiration, 5 min.
+const UPLOAD_URL_EXPIRES_SECS: u64 = 300;
+
+/// Auth service configuration.
 #[derive(Debug, Clone)]
 pub struct AuthServiceConfig {
     pub jwt_secret_key: String,
     pub access_token_ttl_minutes: u64,
     pub refresh_token_ttl_days: i64,
-    pub max_photo_bytes: usize,
 }
 
-/// Session tokens (access + refresh)
+/// Session tokens.
 struct SessionTokens {
     access_token: String,
     refresh_token: String,
 }
 
-/// Auth service implementation
+/// Authorization context from middleware.
+struct AuthContext {
+    user_id: Uuid,
+    email: String,
+    role: DbUserRole,
+    device_id: Uuid,
+    installation_id: Uuid,
+}
+
+impl AuthContext {
+    fn is_admin(&self) -> bool {
+        self.role == DbUserRole::Administrator
+    }
+
+    fn can_access(&self, target: Uuid) -> bool {
+        self.user_id == target || self.is_admin()
+    }
+
+    fn require_access(&self, target: Uuid, action: &str) -> Result<(), Status> {
+        if self.can_access(target) {
+            Ok(())
+        } else {
+            warn!(user_id = %self.user_id, target = %target, action, "Permission denied");
+            Err(Status::permission_denied(format!(
+                "Cannot {action} for other users"
+            )))
+        }
+    }
+}
+
+impl TryFrom<&MiddlewareAuthInfo> for AuthContext {
+    type Error = Status;
+
+    fn try_from(info: &MiddlewareAuthInfo) -> Result<Self, Self::Error> {
+        Ok(Self {
+            user_id: info.user_id,
+            email: info.email.clone(),
+            role: info.role,
+            device_id: info.device_id,
+            installation_id: info.installation_id,
+        })
+    }
+}
+
+fn require_auth<T>(req: &Request<T>) -> Result<AuthContext, Status> {
+    req.extensions()
+        .get::<MiddlewareAuthInfo>()
+        .ok_or_else(|| Status::unauthenticated("Authentication required"))?
+        .try_into()
+}
+
+fn require_admin<T>(req: &Request<T>) -> Result<AuthContext, Status> {
+    let auth = require_auth(req)?;
+    if !auth.is_admin() {
+        return Err(Status::permission_denied("Admin access required"));
+    }
+    Ok(auth)
+}
+
+/// Auth service implementation.
 pub struct AuthServiceImpl {
     config: AuthServiceConfig,
     db: Database,
+    s3: Option<Arc<S3Storage>>,
 }
 
 impl AuthServiceImpl {
-    pub fn new(config: AuthServiceConfig, db: Database) -> Self {
-        Self { config, db }
+    pub fn new(config: AuthServiceConfig, db: Database, s3: Option<Arc<S3Storage>>) -> Self {
+        Self { config, db, s3 }
     }
 
     fn canonical_email(email: &str) -> String {
         email.trim().to_lowercase()
     }
 
-    /// Create session tokens for a user (reduces duplication in sign_in/refresh_tokens)
+    /// Create session tokens for a user
     async fn create_session(
         &self,
         user: &User,
@@ -93,13 +159,28 @@ impl AuthServiceImpl {
         })
     }
 
-    /// Hash a password with error conversion
     fn hash_password(password: &str) -> Result<String, Status> {
         Encryptor::hash(password).status("Failed to hash password")
     }
+
+    fn require_s3(&self) -> Result<&Arc<S3Storage>, Status> {
+        self.s3.as_ref().ok_or_else(|| {
+            error!("S3 not configured");
+            Status::internal("Storage not configured")
+        })
+    }
+
+    async fn delete_avatar(&self, user_id: &Uuid) -> Result<(), Status> {
+        if let Some(s3) = &self.s3 {
+            s3.delete_avatar(user_id)
+                .await
+                .status("Failed to delete avatar")?;
+            debug!(user_id = %user_id, "Avatar deleted from S3");
+        }
+        Ok(())
+    }
 }
 
-/// Stream result type alias for gRPC streaming responses.
 type StreamResult<T> = Pin<Box<dyn tokio_stream::Stream<Item = Result<T, Status>> + Send>>;
 
 #[tonic::async_trait]
@@ -112,9 +193,9 @@ impl AuthService for AuthServiceImpl {
         // Schema-level validation (email format, required fields, etc.)
         req.validate_or_status()?;
 
-        let user_email = Self::canonical_email(&req.email);
-        tracing::Span::current().record("email", &user_email);
-        info!(email = %user_email, "Sign in attempt");
+        let email = Self::canonical_email(&req.email);
+        tracing::Span::current().record("email", &email);
+        info!(email = %email, "Sign in attempt");
 
         let device_id = req
             .device_info
@@ -126,20 +207,14 @@ impl AuthService for AuthServiceImpl {
             .as_ref()
             .parse_or_status_with_field("installation_id")?;
 
-        // Get user from database
-        let user = self
-            .db
-            .users
-            .get_active_user(&user_email)
-            .await
-            .map_err(|e| {
-                warn!(email = %user_email, error = %e, "User not found");
-                Status::unauthenticated("Invalid credentials")
-            })?;
+        let user = self.db.users.get_active_user(&email).await.map_err(|e| {
+            warn!(email = %email, error = %e, "User not found");
+            Status::unauthenticated("Invalid credentials")
+        })?;
 
         // Validate password
         if !Encryptor::verify(&req.password, &user.password) {
-            warn!(email = %user_email, "Invalid password");
+            warn!(email = %email, "Invalid password");
             return Err(Status::unauthenticated("Invalid credentials"));
         }
 
@@ -147,14 +222,12 @@ impl AuthService for AuthServiceImpl {
         let tokens = self
             .create_session(&user, &device_id, &installation_id)
             .await?;
-
         info!(user_id = %user.id, "Sign in successful");
 
         Ok(Response::new(AuthInfo {
             user_id: Some(user.id.to_proto()),
             user_name: user.name,
             user_role: user.role.into(),
-            blurhash: user.blurhash,
             refresh_token: tokens.refresh_token,
             access_token: tokens.access_token,
         }))
@@ -163,19 +236,17 @@ impl AuthService for AuthServiceImpl {
     /// Sign out the current user
     #[instrument(skip(self, request), fields(user_id))]
     async fn sign_out(&self, request: Request<()>) -> Result<Response<ResultReply>, Status> {
-        let auth_info = require_auth(&request)?;
-        let user_id = auth_info.user_info.id;
-        tracing::Span::current().record("user_id", user_id.to_string());
+        let auth = require_auth(&request)?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
 
-        info!(user_id = %user_id, "Sign out");
+        info!(user_id = %auth.user_id, "Signing out");
 
         self.db
             .sessions
-            .end_user_session(user_id)
+            .end_user_session(auth.user_id)
             .await
             .status("Sign out failed")?;
-
-        debug!(user_id = %user_id, "Sign out successful");
+        info!(user_id = %auth.user_id, "Signed out");
 
         Ok(Response::new(ResultReply { result: true }))
     }
@@ -186,51 +257,43 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<RefreshTokenRequest>,
     ) -> Result<Response<RefreshTokenReply>, Status> {
-        let auth_info = require_auth(&request)?;
-        let user_id = auth_info.user_info.id;
-        let device_id = auth_info.device_id;
-        let installation_id = auth_info.installation_id;
-        tracing::Span::current().record("user_id", user_id.to_string());
+        let auth = require_auth(&request)?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
 
         let req = request.into_inner();
-
-        // Schema-level validation
         req.validate_or_status()?;
 
-        debug!(user_id = %user_id, "Refresh token request");
+        debug!(user_id = %auth.user_id, "Refresh token request");
 
         // Load stored refresh token hash
-        let refresh_token_hash =
-            self.db
-                .sessions
-                .load_refresh_token(user_id)
-                .await
-                .map_err(|e| {
-                    warn!(user_id = %user_id, error = %e, "Session not found");
-                    Status::unauthenticated("Session expired")
-                })?;
+        let stored_hash = self
+            .db
+            .sessions
+            .load_refresh_token(auth.user_id)
+            .await
+            .map_err(|e| {
+                warn!(user_id = %auth.user_id, error = %e, "Session not found");
+                Status::unauthenticated("Session expired")
+            })?;
 
         // Validate provided refresh token
-        if !Encryptor::verify(&req.refresh_token, &refresh_token_hash) {
-            warn!(user_id = %user_id, "Invalid refresh token");
+        if !Encryptor::verify(&req.refresh_token, &stored_hash) {
+            warn!(user_id = %auth.user_id, "Invalid refresh token");
             return Err(Status::unauthenticated("Invalid refresh token"));
         }
 
         // Get user
-        let email = Self::canonical_email(&auth_info.user_info.email);
-        let user = self
-            .db
-            .users
-            .get_active_user(&email)
-            .await
-            .map_err(|_| Status::unauthenticated("User not found"))?;
+        let email = Self::canonical_email(&auth.email);
+        let user = self.db.users.get_active_user(&email).await.map_err(|e| {
+            warn!(email = %email, error = %e, "User not found during token refresh");
+            Status::unauthenticated("User not found")
+        })?;
 
         // Create new session tokens
         let tokens = self
-            .create_session(&user, &device_id, &installation_id)
+            .create_session(&user, &auth.device_id, &auth.installation_id)
             .await?;
-
-        info!(user_id = %user_id, "Token refreshed");
+        info!(user_id = %auth.user_id, "Token refreshed");
 
         Ok(Response::new(RefreshTokenReply {
             refresh_token: tokens.refresh_token,
@@ -244,17 +307,17 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<()>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth_info = require_auth(&request)?;
+        let auth = require_auth(&request)?;
 
-        debug!(user_id = %auth_info.user_info.id, "Validating credentials");
+        debug!(user_id = %auth.user_id, "Validating credentials");
 
         // Verify user still exists and is active
-        let email = Self::canonical_email(&auth_info.user_info.email);
-        self.db
-            .users
-            .get_active_user(&email)
-            .await
-            .map_err(|_| Status::unauthenticated("User not found"))?;
+        let email = Self::canonical_email(&auth.email);
+
+        self.db.users.get_active_user(&email).await.map_err(|e| {
+            warn!(user_id = %auth.user_id, email = %email, error = %e, "User validation failed");
+            Status::unauthenticated("User not found")
+        })?;
 
         Ok(Response::new(ResultReply { result: true }))
     }
@@ -269,30 +332,18 @@ impl AuthService for AuthServiceImpl {
         request: Request<ResetPasswordRequest>,
     ) -> Result<Response<ResultReply>, Status> {
         let req = request.into_inner();
-
-        // Schema-level validation (email format)
         req.validate_or_status()?;
 
-        let user_email = Self::canonical_email(&req.email);
+        let email = Self::canonical_email(&req.email);
+        debug!(email = %email, "Password reset requested");
 
-        // Log attempt (without revealing if user exists)
-        debug!("Password reset requested");
-
-        // Spawn async task to handle reset - this prevents timing attacks
+        // Async task to handle reset - prevents timing attacks
         // by always returning immediately regardless of user existence
         let db = self.db.clone();
-        let email = user_email.clone();
         tokio::spawn(async move {
-            match db.users.get_active_user(&email).await {
-                Ok(user) => {
-                    // TODO: Generate reset token and send email
-                    // For now, just log the attempt
-                    info!(user_id = %user.id, "Password reset token generated");
-                }
-                Err(_) => {
-                    // User not found - silently ignore to prevent enumeration
-                    debug!("Password reset requested for non-existent email");
-                }
+            if let Ok(user) = db.users.get_active_user(&email).await {
+                info!(user_id = %user.id, "Password reset token generated");
+                // TODO: Send email
             }
         });
 
@@ -305,194 +356,88 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<SetPasswordRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth_info = require_auth(&request)?;
+        let auth = require_auth(&request)?;
         let req = request.into_inner();
-
-        // Schema-level validation (email format, password min length)
         req.validate_or_status()?;
 
-        let target_user_id = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
-        tracing::Span::current().record("user_id", auth_info.user_info.id.to_string());
-        tracing::Span::current().record("target_user_id", target_user_id.to_string());
+        let target_id = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", &target_id.to_string());
 
-        // Authorization: user can change own password, admin can change any
-        let is_self = auth_info.user_info.id == target_user_id;
-        let is_admin = auth_info.user_info.role == DbUserRole::Administrator;
+        auth.require_access(target_id, "change password")?;
 
-        if !is_self && !is_admin {
-            warn!(
-                user_id = %auth_info.user_info.id,
-                target_user_id = %target_user_id,
-                "Unauthorized password change attempt"
-            );
-            return Err(Status::permission_denied(
-                "Can only change your own password",
-            ));
-        }
-
-        // Verify target user exists and email matches user_id (prevents email substitution attack)
-        let target_user = self
-            .db
-            .users
-            .get_user_by_id(target_user_id)
-            .await
-            .map_err(|_| Status::not_found("User not found"))?;
+        let target = self.db.users.get_user_by_id(target_id).await.map_err(|e| {
+            warn!(target_user_id = %target_id, error = %e, "User not found for password change");
+            Status::not_found("User not found")
+        })?;
 
         let email = Self::canonical_email(&req.email);
-        if Self::canonical_email(&target_user.email) != email {
+        if Self::canonical_email(&target.email) != email {
             warn!(
-                user_id = %target_user_id,
+                target_user_id = %target_id,
                 provided_email = %req.email,
+                expected_email = %target.email,
                 "Email mismatch in password change"
             );
             return Err(Status::invalid_argument("Email does not match user"));
         }
 
-        let password_hash = Self::hash_password(&req.password)?;
-
+        let hash = Self::hash_password(&req.password)?;
         self.db
             .users
-            .update_user_password(&email, &password_hash)
+            .update_user_password(&email, &hash)
             .await
             .status("Failed to update password")?;
 
-        info!(user_id = %target_user_id, "Password updated");
-
+        info!(user_id = %target_id, "Password updated");
         Ok(Response::new(ResultReply { result: true }))
-    }
-
-    /// Load user info for a specific user
-    #[instrument(skip(self, request), fields(user_id, target_user_id))]
-    async fn load_user_info(
-        &self,
-        request: Request<UserId>,
-    ) -> Result<Response<ProtoUserInfo>, Status> {
-        let auth_info = require_auth(&request)?;
-        let req = request.into_inner();
-        req.validate_or_status()?;
-
-        let target_user_id = req.id.as_ref().parse_or_status_with_field("user_id")?;
-        let is_admin = auth_info.user_info.role == DbUserRole::Administrator;
-
-        tracing::Span::current().record("user_id", auth_info.user_info.id.to_string());
-        tracing::Span::current().record("target_user_id", target_user_id.to_string());
-
-        if !is_admin && auth_info.user_info.id != target_user_id {
-            warn!(
-                user_id = %auth_info.user_info.id,
-                target_user_id = %target_user_id,
-                "Unauthorized user info lookup"
-            );
-            return Err(Status::permission_denied("Cannot load other user's info"));
-        }
-
-        debug!(
-            user_id = %auth_info.user_info.id,
-            target_user_id = %target_user_id,
-            "Loading user info"
-        );
-
-        let user_info =
-            self.db
-                .users
-                .get_user_info(target_user_id)
-                .await
-                .map_err(|error| match &error {
-                    AppError::NotFound(_) => {
-                        warn!(user_id = %target_user_id, "Requested user not found");
-                        Status::not_found("User not found")
-                    }
-                    _ => {
-                        error!(user_id = %target_user_id, error = %error, "Failed to load user info");
-                        Status::from(error)
-                    }
-                })?;
-
-        Ok(Response::new(ProtoUserInfo::from(user_info)))
     }
 
     type LoadUsersInfoStream = StreamResult<ProtoUserInfo>;
 
-    /// Load user info for all users (streaming) - requires admin
+    /// Load user info (streaming) - requires admin
+    /// If user_ids is empty, returns all users; otherwise filters by provided IDs
     #[instrument(skip(self, request), fields(user_id))]
     async fn load_users_info(
         &self,
-        request: Request<()>,
+        request: Request<LoadUsersInfoRequest>,
     ) -> Result<Response<Self::LoadUsersInfoStream>, Status> {
-        let admin_info = require_admin(&request)?;
-        tracing::Span::current().record("user_id", admin_info.user_info.id.to_string());
+        let admin = require_admin(&request)?;
+        tracing::Span::current().record("user_id", &admin.user_id.to_string());
 
-        debug!(user_id = %admin_info.user_info.id, "Loading users info");
-
-        let db = self.db.clone();
-
-        let stream = try_stream! {
-            let mut rows = db.users.stream_all_users();
-
-            while let Some(result) = rows.next().await {
-                let user = result.map_err(|e| {
-                    let app_error: AppError = e.into();
-                    error!(error = %app_error, "Failed to stream users");
-                    Status::from(app_error)
-                })?;
-
-                yield ProtoUserInfo::from(user);
-            }
-        };
-
-        Ok(Response::new(Box::pin(stream)))
-    }
-
-    type LoadUserAvatarStream = StreamResult<ProtoUserAvatar>;
-
-    /// Load user avatars (streaming)
-    #[instrument(skip(self, request), fields(user_id))]
-    async fn load_user_avatar(
-        &self,
-        request: Request<LoadUserAvatarRequest>,
-    ) -> Result<Response<Self::LoadUserAvatarStream>, Status> {
-        let auth_info = require_auth(&request)?;
-        tracing::Span::current().record("user_id", auth_info.user_info.id.to_string());
-
-        let req = request.into_inner();
-        let mut user_ids = Vec::with_capacity(req.user_id.len());
-
-        for proto_id in &req.user_id {
-            let id = Some(proto_id).parse_or_status()?;
-            user_ids.push(id);
-        }
-
-        let is_admin = auth_info.user_info.role == DbUserRole::Administrator;
-        if !is_admin {
-            if user_ids.is_empty() {
-                user_ids.push(auth_info.user_info.id);
-            } else if user_ids.iter().any(|id| *id != auth_info.user_info.id) {
-                warn!(
-                    requestor = %auth_info.user_info.id,
-                    "Attempt to load avatars for other users"
-                );
-                return Err(Status::permission_denied(
-                    "Cannot load avatars for other users",
-                ));
-            }
-        }
+        let user_ids: Vec<Uuid> = request
+            .into_inner()
+            .user_ids
+            .iter()
+            .filter_map(|id| Uuid::parse_str(&id.value).ok())
+            .collect();
 
         debug!(
-            user_id = %auth_info.user_info.id,
-            count = user_ids.len(),
-            "Loading user avatars"
+            user_id = %admin.user_id,
+            filter_count = user_ids.len(),
+            "Loading users info"
         );
 
-        let avatars = self
-            .db
-            .photos
-            .load_user_avatars(&user_ids)
-            .await
-            .status("Failed to load avatars")?;
-
+        let db = self.db.clone();
         let stream = try_stream! {
-            for avatar in avatars {
-                yield ProtoUserAvatar::from(avatar);
+            if user_ids.is_empty() {
+                let mut rows = db.users.stream_all_users();
+                while let Some(result) = rows.next().await {
+                    let user = result.map_err(|e| {
+                        error!(error = %e, "Failed to stream user info");
+                        Status::from(AppError::from(e))
+                    })?;
+                    yield ProtoUserInfo::from(user);
+                }
+            } else {
+                let mut rows = db.users.stream_users_by_ids(user_ids);
+                while let Some(result) = rows.next().await {
+                    let user = result.map_err(|e| {
+                        error!(error = %e, "Failed to stream user info");
+                        Status::from(AppError::from(e))
+                    })?;
+                    yield ProtoUserInfo::from(user);
+                }
             }
         };
 
@@ -501,55 +446,42 @@ impl AuthService for AuthServiceImpl {
 
     type LoadUsersStream = StreamResult<ProtoUser>;
 
-    /// Load all users (streaming)
-    #[instrument(skip(self, request), fields(user_id, target_user_id))]
+    /// Load users (streaming)
+    /// Admin: streams all users; Non-admin: streams only themselves
+    #[instrument(skip(self, request), fields(user_id))]
     async fn load_users(
         &self,
         request: Request<UserId>,
     ) -> Result<Response<Self::LoadUsersStream>, Status> {
-        let auth_info = require_auth(&request)?;
+        let auth = require_auth(&request)?;
         let req = request.into_inner();
         req.validate_or_status()?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
 
-        let target_user_id = req.id.as_ref().parse_or_status_with_field("user_id")?;
-        let is_admin = auth_info.user_info.role == DbUserRole::Administrator;
-
-        tracing::Span::current().record("user_id", auth_info.user_info.id.to_string());
-        tracing::Span::current().record("target_user_id", target_user_id.to_string());
-
-        if !is_admin && auth_info.user_info.id != target_user_id {
-            warn!(
-                user_id = %auth_info.user_info.id,
-                target_user_id = %target_user_id,
-                "Unauthorized user lookup"
-            );
-            return Err(Status::permission_denied("Cannot load other users"));
-        }
-
-        debug!(
-            user_id = %auth_info.user_info.id,
-            target_user_id = %target_user_id,
-            "Loading user"
-        );
-
-        let user =
-            self.db
-                .users
-                .get_user_info(target_user_id)
-                .await
-                .map_err(|error| match &error {
-                    AppError::NotFound(_) => {
-                        warn!(user_id = %target_user_id, "Requested user not found");
-                        Status::not_found("User not found")
-                    }
-                    _ => {
-                        error!(user_id = %target_user_id, error = %error, "Failed to load user");
-                        Status::from(error)
-                    }
-                })?;
+        let db = self.db.clone();
+        let is_admin = auth.is_admin();
+        let user_id = auth.user_id;
 
         let stream = try_stream! {
-            yield ProtoUser::from(user);
+            if is_admin {
+                let mut rows = db.users.stream_all_users();
+                while let Some(result) = rows.next().await {
+                    let user = result.map_err(|e| {
+                        error!(error = %e, "Failed to stream users");
+                        Status::from(AppError::from(e))
+                    })?;
+                    yield ProtoUser::from(user);
+                }
+            } else {
+                let mut rows = db.users.stream_users_by_ids(vec![user_id]);
+                while let Some(result) = rows.next().await {
+                    let user = result.map_err(|e| {
+                        error!(error = %e, "Failed to stream users");
+                        Status::from(AppError::from(e))
+                    })?;
+                    yield ProtoUser::from(user);
+                }
+            }
         };
 
         Ok(Response::new(Box::pin(stream)))
@@ -561,18 +493,18 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<CreateUserRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth_info = require_admin(&request)?;
+        let admin = require_admin(&request)?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let user_id = req.id.as_ref().parse_or_status_with_field("user_id")?;
         let email = Self::canonical_email(&req.email);
 
-        tracing::Span::current().record("admin_id", auth_info.user_info.id.to_string());
-        tracing::Span::current().record("new_user_id", user_id.to_string());
-        info!(admin_id = %auth_info.user_info.id, new_user_id = %user_id, email = %email, "Creating user");
+        tracing::Span::current().record("admin_id", &admin.user_id.to_string());
+        tracing::Span::current().record("new_user_id", &user_id.to_string());
+        info!(admin_id = %admin.user_id, new_user_id = %user_id, email = %email, "Creating user");
 
-        let password_hash = Self::hash_password(&req.password)?;
+        let hash = Self::hash_password(&req.password)?;
         let role = DbUserRole::try_from(req.role)?;
 
         self.db
@@ -581,19 +513,14 @@ impl AuthService for AuthServiceImpl {
                 id: user_id,
                 name: req.name,
                 email,
-                password: password_hash,
+                password: hash,
                 role,
                 deleted: req.deleted,
             })
             .await
             .status("Failed to create user")?;
 
-        info!(
-            user_id = %user_id,
-            created_by = %auth_info.user_info.id,
-            "User created"
-        );
-
+        info!(user_id = %user_id, created_by = %admin.user_id, "User created");
         Ok(Response::new(ResultReply { result: true }))
     }
 
@@ -603,17 +530,17 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<UpdateUserRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth_info = require_admin(&request)?;
+        let admin = require_admin(&request)?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let user_id = req.id.as_ref().parse_or_status_with_field("user_id")?;
         let email = Self::canonical_email(&req.email);
 
-        tracing::Span::current().record("admin_id", auth_info.user_info.id.to_string());
-        tracing::Span::current().record("target_user_id", user_id.to_string());
+        tracing::Span::current().record("admin_id", &admin.user_id.to_string());
+        tracing::Span::current().record("target_user_id", &user_id.to_string());
         info!(
-            admin_id = %auth_info.user_info.id,
+            admin_id = %admin.user_id,
             target_user_id = %user_id,
             "Updating user"
         );
@@ -632,98 +559,97 @@ impl AuthService for AuthServiceImpl {
             .await
             .status("Failed to update user")?;
 
-        info!(
-            user_id = %user_id,
-            updated_by = %auth_info.user_info.id,
-            "User updated"
-        );
-
+        info!(user_id = %user_id, updated_by = %admin.user_id, "User updated");
         Ok(Response::new(ResultReply { result: true }))
     }
 
-    /// Save user photo - user can save own, admin can save any
+    /// Get a presigned URL for uploading avatar directly to S3
+    /// Client uploads directly, bypassing backend for better performance
     #[instrument(skip(self, request), fields(user_id, target_user_id))]
-    async fn save_user_photo(
+    async fn get_avatar_upload_url(
         &self,
-        request: Request<UserPhoto>,
-    ) -> Result<Response<ResultReply>, Status> {
-        let auth_info = require_auth(&request)?;
-
+        request: Request<GetAvatarUploadUrlRequest>,
+    ) -> Result<Response<AvatarUploadUrl>, Status> {
+        let auth = require_auth(&request)?;
         let req = request.into_inner();
-
-        // Schema-level validation (user_id required)
         req.validate_or_status()?;
 
-        let target_user_id = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
+        let target_id: Uuid = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", &target_id.to_string());
 
-        tracing::Span::current().record("user_id", auth_info.user_info.id.to_string());
-        tracing::Span::current().record("target_user_id", target_user_id.to_string());
-
-        // Authorization: user can update own photo, admin can update any
-        let is_self = auth_info.user_info.id == target_user_id;
-        let is_admin = auth_info.user_info.role == DbUserRole::Administrator;
-
-        if !is_self && !is_admin {
-            warn!(
-                user_id = %auth_info.user_info.id,
-                target_user_id = %target_user_id,
-                "Unauthorized photo update attempt"
-            );
-            return Err(Status::permission_denied("Can only update your own photo"));
-        }
-
-        let photo_data = req
-            .photo
-            .ok_or_else(|| Status::invalid_argument("Photo data is required"))?;
-
-        if photo_data.len() > self.config.max_photo_bytes {
-            warn!(
-                user_id = %target_user_id,
-                size = photo_data.len(),
-                max = self.config.max_photo_bytes,
-                "Photo exceeds maximum size"
-            );
-            return Err(Status::invalid_argument(
-                "Photo exceeds maximum allowed size",
-            ));
-        }
-
-        match image::guess_format(&photo_data) {
-            Ok(ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP) => {}
-            Ok(_) | Err(_) => {
-                warn!(user_id = %target_user_id, "Unsupported photo format");
-                return Err(Status::invalid_argument("Unsupported image format"));
-            }
-        }
-
-        debug!(
-            user_id = %target_user_id,
-            size = photo_data.len(),
-            "Processing user photo"
-        );
-
-        // Process image to create avatar and blurhash
-        let (avatar, blurhash) = to_avatar(&photo_data).map_err(|e| {
-            error!(error = %e, "Failed to process photo");
-            Status::invalid_argument("Invalid image data")
-        })?;
-
-        // Save photo
+        auth.require_access(target_id, "upload avatar")?;
         self.db
-            .photos
-            .save_user_photo(
-                SaveUserPhotoParams {
-                    user_id: target_user_id,
-                    avatar,
-                    photo: photo_data,
-                },
-                &blurhash,
+            .users
+            .get_user_by_id(target_id)
+            .await
+            .map_err(|_| Status::not_found("User not found"))?;
+
+        let s3 = self.require_s3()?;
+        let presigned = s3
+            .presign_avatar_upload(
+                &target_id,
+                &req.content_type,
+                req.content_size,
+                UPLOAD_URL_EXPIRES_SECS,
             )
             .await
-            .status("Failed to save photo")?;
+            .status("Failed to generate S3 upload URL")?;
 
-        info!(user_id = %target_user_id, "Photo saved");
+        info!(user_id = %target_id, "Upload URL generated");
+        Ok(Response::new(AvatarUploadUrl {
+            upload_url: presigned.url,
+            expires_in: presigned.expires_in_secs,
+        }))
+    }
 
+    /// Confirm avatar upload completed
+    #[instrument(skip(self, request), fields(user_id, target_user_id))]
+    async fn confirm_avatar_upload(
+        &self,
+        request: Request<ConfirmAvatarUploadRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        let auth = require_auth(&request)?;
+        let req = request.into_inner();
+        req.validate_or_status()?;
+
+        let target_id: Uuid = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", &target_id.to_string());
+
+        auth.require_access(target_id, "confirm avatar upload")?;
+
+        let s3 = self.require_s3()?;
+
+        // Verify the avatar was uploaded successfully
+        s3.avatar_exists(&target_id)
+            .await
+            .status("Failed to check avatar")?
+            .then_some(())
+            .ok_or_not_found("Avatar not uploaded")?;
+
+        info!(user_id = %target_id, "Avatar upload confirmed");
+        Ok(Response::new(ResultReply { result: true }))
+    }
+
+    /// Delete user avatar from S3
+    #[instrument(skip(self, request), fields(user_id, target_user_id))]
+    async fn delete_user_avatar(
+        &self,
+        request: Request<UserId>,
+    ) -> Result<Response<ResultReply>, Status> {
+        let auth = require_auth(&request)?;
+        let req = request.into_inner();
+        req.validate_or_status()?;
+
+        let target_id: Uuid = req.id.as_ref().parse_or_status_with_field("user_id")?;
+        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", &target_id.to_string());
+
+        auth.require_access(target_id, "delete avatar")?;
+        self.delete_avatar(&target_id).await?;
+
+        info!(user_id = %target_id, "Avatar deleted");
         Ok(Response::new(ResultReply { result: true }))
     }
 }

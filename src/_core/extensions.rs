@@ -1,4 +1,4 @@
-//! Extension traits to reduce boilerplate across the codebase.
+//! Extension traits to reduce boilerplate.
 
 use tonic::Status;
 use uuid::Uuid;
@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::proto::core::Uuid as ProtoUuid;
 
 /// Extension trait for parsing `Option<&ProtoUuid>` into `Uuid`.
+#[allow(dead_code)]
 pub trait UuidExt {
     /// Parse the UUID or return a `Status::invalid_argument` error.
     fn parse_or_status(&self) -> Result<Uuid, Status>;
@@ -62,10 +63,7 @@ mod tests {
         let proto = ProtoUuid {
             value: uuid.to_string(),
         };
-
-        let result = Some(&proto).parse_or_status();
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), uuid);
+        assert_eq!(Some(&proto).parse_or_status().unwrap(), uuid);
     }
 
     #[test]
@@ -80,14 +78,12 @@ mod tests {
         let proto = ProtoUuid {
             value: "not-a-uuid".to_string(),
         };
-        let result = Some(&proto).parse_or_status();
-        assert!(result.is_err());
+        assert!(Some(&proto).parse_or_status().is_err());
     }
 
     #[test]
     fn test_to_proto_uuid() {
         let uuid = Uuid::new_v4();
-        let proto = uuid.to_proto();
-        assert_eq!(proto.value, uuid.to_string());
+        assert_eq!(uuid.to_proto().value, uuid.to_string());
     }
 }

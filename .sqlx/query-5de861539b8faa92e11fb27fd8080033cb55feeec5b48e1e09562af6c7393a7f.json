@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id,\n                   role AS \"role: UserRole\",\n                   name,\n                   email,\n                   password,\n                   blurhash,\n                   deleted_at\n              FROM \"user\"\n             WHERE id = $1\n             LIMIT 1\n            ",
+  "query": "\n            SELECT id,\n                   role AS \"role: UserRole\",\n                   name,\n                   email,\n                   password,\n                   deleted_at\n              FROM \"user\"\n             WHERE email = $1\n               AND (deleted_at IS NULL OR deleted_at > NOW())\n             LIMIT 1\n            ",
   "describe": {
     "columns": [
       {
@@ -40,18 +40,13 @@
       },
       {
         "ordinal": 5,
-        "name": "blurhash",
-        "type_info": "Varchar"
-      },
-      {
-        "ordinal": 6,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text"
       ]
     },
     "nullable": [
@@ -60,9 +55,8 @@
       false,
       false,
       false,
-      true,
       true
     ]
   },
-  "hash": "7c5f2905d0bd3192951856f912917e9c027e0f61c8c2789f05dc0f57ba9dcf93"
+  "hash": "5de861539b8faa92e11fb27fd8080033cb55feeec5b48e1e09562af6c7393a7f"
 }

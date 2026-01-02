@@ -1,3 +1,3 @@
-pub mod image;
+pub mod storage;
 
-pub use image::to_avatar;
+pub use storage::{S3Config, S3Storage};

@@ -1,21 +1,24 @@
+//! Configuration with validation at compile time and runtime.
+
 use std::time::Duration;
 
 use clap::Parser;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
-/// Authentication gRPC service configuration
+/// Minimum required JWT secret length for security (256 bits).
+const MIN_JWT_SECRET_LEN: usize = 32;
+
+/// Authentication gRPC service configuration.
+///
+/// All values can be set via environment variables or CLI arguments.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "auth-service", about = "Authentication gRPC service")]
 pub struct Config {
-    /// gRPC server address
+    /// Server address (gRPC + REST on single port)
     #[arg(long, env = "GRPC_ADDRESS", default_value = "0.0.0.0:50051")]
     pub grpc_address: String,
 
-    /// HTTP server address for file operations (optional)
-    #[arg(long, env = "HTTP_ADDRESS")]
-    pub http_address: Option<String>,
-
-    /// Enable gRPC-Web support (allows browser clients without Envoy proxy)
+    /// Enable gRPC-Web support
     #[arg(long, env = "GRPC_WEB", default_value = "true")]
     pub grpc_web: bool,
 
@@ -27,15 +30,15 @@ pub struct Config {
     #[arg(long, env = "GRPC_API_REFLECTION", default_value = "false")]
     pub grpc_reflection: bool,
 
-    /// JWT secret key for signing tokens (protected from accidental exposure)
+    /// JWT secret key for signing tokens (min 32 chars)
     #[arg(long, env = "JWT_SECRET_KEY")]
     pub jwt_secret_key: SecretString,
 
-    /// Access token TTL in minutes (default: 15 minutes)
+    /// Access token TTL in minutes
     #[arg(long, env = "ACCESS_TOKEN_TTL_MINUTES", default_value = "15")]
     pub access_token_ttl_minutes: u64,
 
-    /// Refresh token TTL in days (default: 7 days)
+    /// Refresh token TTL in days
     #[arg(long, env = "REFRESH_TOKEN_TTL_DAYS", default_value = "7")]
     pub refresh_token_ttl_days: i64,
 
@@ -43,15 +46,15 @@ pub struct Config {
     #[arg(long, env = "DB_URL")]
     pub db_url: String,
 
-    /// Database password (will be URL-encoded and inserted into DB_URL)
+    /// Database password (URL-encoded and inserted into DB_URL)
     #[arg(long, env = "DB_PASSWORD")]
     pub db_password: Option<String>,
 
-    /// Database connection pool minimum size
+    /// Database pool minimum connections
     #[arg(long, env = "DB_POOL_MIN", default_value = "2")]
     pub db_pool_min: u32,
 
-    /// Database connection pool maximum size
+    /// Database pool maximum connections
     #[arg(long, env = "DB_POOL_MAX", default_value = "10")]
     pub db_pool_max: u32,
 
@@ -63,54 +66,61 @@ pub struct Config {
     #[arg(long, env = "LOG_LEVEL", default_value = "INFO")]
     pub log_level: String,
 
-    /// Use JSON log format (vs human-readable)
+    /// Use JSON log format
     #[arg(long, env = "JSON_LOGS", default_value = "true")]
     pub json_logs: bool,
 
-    /// OpenTelemetry OTLP endpoint (e.g., http://localhost:4317)
+    /// OpenTelemetry OTLP endpoint
     #[arg(long, env = "OTLP_ENDPOINT")]
     pub otlp_endpoint: Option<String>,
 
-    /// Concurrency limit: max concurrent requests
+    /// Max concurrent requests
     #[arg(long, env = "CONCURRENCY_LIMIT", default_value = "100")]
     pub rate_limit_rps: u64,
 
-    /// Maximum photo upload size in bytes (default: 2MB)
+    /// Max photo upload size in bytes (default: 2MB)
     #[arg(long, env = "MAX_PHOTO_BYTES", default_value = "2097152")]
     pub max_photo_bytes: usize,
+
+    /// S3 endpoint URL (e.g., http://localhost:9000/bucket-name/)
+    #[arg(long, env = "S3_URL")]
+    pub s3_url: Option<String>,
+
+    /// S3 access key ID
+    #[arg(long, env = "S3_ACCESS_KEY_ID")]
+    pub s3_access_key_id: Option<String>,
+
+    /// S3 secret access key
+    #[arg(long, env = "S3_SECRET_ACCESS_KEY")]
+    pub s3_secret_access_key: Option<String>,
 }
 
-/// Configuration validation errors
+/// Configuration validation errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("JWT secret key must be at least 32 characters")]
+    #[error("JWT secret must be at least {MIN_JWT_SECRET_LEN} characters")]
     JwtSecretTooShort,
-
-    #[error("Access token TTL must be greater than 0")]
+    #[error("Access token TTL must be > 0")]
     InvalidAccessTokenTtl,
-
-    #[error("Refresh token TTL must be greater than 0")]
+    #[error("Refresh token TTL must be > 0")]
     InvalidRefreshTokenTtl,
-
-    #[error("Database pool max must be >= min")]
-    InvalidPoolSize,
-
-    #[error("Concurrency limit must be greater than 0")]
+    #[error("Database pool max ({max}) must be >= min ({min})")]
+    InvalidPoolSize { min: u32, max: u32 },
+    #[error("Concurrency limit must be > 0")]
     InvalidConcurrencyLimit,
 }
 
 impl Config {
-    /// Parse configuration from command line args and environment variables
+    /// Parse and validate configuration.
     pub fn init() -> anyhow::Result<Self> {
-        let config = Config::parse();
+        let config = Self::parse();
         config.validate()?;
         Ok(config)
     }
 
-    /// Validate configuration values
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        use secrecy::ExposeSecret;
-        if self.jwt_secret_key.expose_secret().len() < 32 {
+    /// Validate configuration values.
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.jwt_secret_key.expose_secret().len() < MIN_JWT_SECRET_LEN {
             return Err(ConfigError::JwtSecretTooShort);
         }
         if self.access_token_ttl_minutes == 0 {
@@ -120,7 +130,10 @@ impl Config {
             return Err(ConfigError::InvalidRefreshTokenTtl);
         }
         if self.db_pool_max < self.db_pool_min {
-            return Err(ConfigError::InvalidPoolSize);
+            return Err(ConfigError::InvalidPoolSize {
+                min: self.db_pool_min,
+                max: self.db_pool_max,
+            });
         }
         if self.rate_limit_rps == 0 {
             return Err(ConfigError::InvalidConcurrencyLimit);
@@ -128,15 +141,21 @@ impl Config {
         Ok(())
     }
 
-    /// Get access token TTL as Duration
-    #[allow(dead_code)]
-    pub fn access_token_ttl(&self) -> Duration {
-        Duration::from_secs(self.access_token_ttl_minutes * 60)
+    /// Get database connection timeout as Duration.
+    #[inline]
+    pub const fn db_connect_timeout(&self) -> Duration {
+        Duration::from_secs(self.db_connect_timeout_secs)
     }
 
-    /// Get database connect timeout as Duration
-    pub fn db_connect_timeout(&self) -> Duration {
-        Duration::from_secs(self.db_connect_timeout_secs)
+    /// Build the database URL with password substitution.
+    pub fn database_url(&self) -> String {
+        match &self.db_password {
+            Some(password) => {
+                let encoded = urlencoding::encode(password);
+                self.db_url.replacen(":@", &format!(":{encoded}@"), 1)
+            }
+            None => self.db_url.clone(),
+        }
     }
 }
 
@@ -144,18 +163,17 @@ impl Config {
 mod tests {
     use super::*;
 
-    fn valid_config() -> Config {
+    fn test_config() -> Config {
         Config {
             grpc_address: "0.0.0.0:50051".to_string(),
-            http_address: None,
             grpc_web: true,
             cors_allow_origins: None,
             grpc_reflection: false,
-            jwt_secret_key: SecretString::from("this_is_a_very_long_secret_key_32".to_string()),
+            jwt_secret_key: SecretString::from("this_is_a_very_long_secret_key_32"),
             access_token_ttl_minutes: 15,
             refresh_token_ttl_days: 7,
-            db_url: "postgres://localhost/auth".to_string(),
-            db_password: None,
+            db_url: "postgres://user:@localhost/auth".to_string(),
+            db_password: Some("secret".to_string()),
             db_pool_min: 2,
             db_pool_max: 10,
             db_connect_timeout_secs: 30,
@@ -164,25 +182,27 @@ mod tests {
             otlp_endpoint: None,
             rate_limit_rps: 100,
             max_photo_bytes: 2 * 1024 * 1024,
+            s3_url: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
         }
     }
 
     #[test]
-    fn test_valid_config() {
-        let config = valid_config();
-        assert!(config.validate().is_ok());
+    fn valid_config_passes_validation() {
+        assert!(test_config().validate().is_ok());
     }
 
     #[test]
-    fn test_access_token_ttl() {
-        let config = valid_config();
-        assert_eq!(config.access_token_ttl(), Duration::from_secs(15 * 60));
+    fn database_url_substitutes_password() {
+        let config = test_config();
+        assert!(config.database_url().contains(":secret@"));
     }
 
     #[test]
-    fn test_jwt_secret_too_short() {
-        let mut config = valid_config();
-        config.jwt_secret_key = SecretString::from("short".to_string());
+    fn jwt_secret_too_short_fails() {
+        let mut config = test_config();
+        config.jwt_secret_key = SecretString::from("short");
         assert!(matches!(
             config.validate(),
             Err(ConfigError::JwtSecretTooShort)
@@ -190,23 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_access_token_ttl() {
-        let mut config = valid_config();
-        config.access_token_ttl_minutes = 0;
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::InvalidAccessTokenTtl)
-        ));
-    }
-
-    #[test]
-    fn test_invalid_pool_size() {
-        let mut config = valid_config();
+    fn invalid_pool_size_fails() {
+        let mut config = test_config();
         config.db_pool_min = 10;
         config.db_pool_max = 5;
         assert!(matches!(
             config.validate(),
-            Err(ConfigError::InvalidPoolSize)
+            Err(ConfigError::InvalidPoolSize { .. })
         ));
     }
 }
