@@ -1,0 +1,37 @@
+[package]
+name = "auth-telemetry"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Observability stack: OpenTelemetry tracing, Prometheus metrics, and Sentry error tracking"
+
+[features]
+default = ["otlp", "prometheus", "sentry"]
+otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry"]
+prometheus = ["metrics-exporter-prometheus"]
+sentry = ["dep:sentry", "sentry-tracing"]
+
+[dependencies]
+# Tracing core
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "chrono"] }
+
+# OpenTelemetry (optional, enabled by default)
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"], optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }
+
+# Prometheus metrics (optional, enabled by default)
+metrics-exporter-prometheus = { version = "0.18", optional = true }
+
+# Sentry (optional, enabled by default)
+sentry = { version = "0.46", default-features = false, features = ["backtrace", "contexts", "panic", "rustls", "tracing"], optional = true }
+sentry-tracing = { version = "0.46", optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

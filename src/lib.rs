@@ -1,11 +1,16 @@
-pub mod auth;
-#[path = "_core/mod.rs"]
-pub mod core;
-pub mod db;
-pub mod middlewares;
-pub mod proto;
-pub mod services;
-pub mod tools;
+//! Auth service library.
+//!
+//! Re-exports commonly used types for convenience.
 
-// Re-export commonly used types from core for convenience
-pub use core::{config, error, extensions, telemetry, validation};
+pub mod config;
+pub mod core;
+pub mod middleware;
+pub mod routes;
+pub mod services;
+pub mod startup;
+
+// Re-export crates for downstream usage
+pub use auth_core;
+pub use auth_db;
+pub use auth_proto;
+pub use auth_storage;

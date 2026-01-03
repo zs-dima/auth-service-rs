@@ -1,0 +1,40 @@
+[package]
+name = "auth-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Shared core types, traits, and error handling for auth services"
+
+[features]
+default = ["jwt"]
+jwt = ["jsonwebtoken", "secrecy", "chrono", "rand", "base64", "serde"]
+
+[dependencies]
+# Error handling
+thiserror = "2.0"
+
+# gRPC
+tonic = { version = "0.14" }
+prost = "0.14"
+prost-validate = { version = "0.2", features = ["derive"] }
+
+# Utilities
+uuid = { version = "1.16", features = ["v4", "serde"] }
+
+# Tracing
+tracing = "0.1"
+
+# JWT (optional, enabled by default)
+jsonwebtoken = { version = "10.2", features = ["rust_crypto"], optional = true }
+secrecy = { version = "0.10", features = ["serde"], optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"], optional = true }
+rand = { version = "0.9", optional = true }
+base64 = { version = "0.22", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

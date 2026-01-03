@@ -1,0 +1,29 @@
+[package]
+name = "auth-proto"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Generated protobuf code for auth service"
+
+[dependencies]
+# Core (for proto extension traits)
+auth-core = { path = "../core" }
+
+# gRPC & protobuf
+tonic = { version = "0.14", features = ["gzip", "transport"] }
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+prost-validate = { version = "0.2", features = ["derive"] }
+uuid = "1"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+prost-build = "0.14"
+prost-validate-build = "0.2"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
