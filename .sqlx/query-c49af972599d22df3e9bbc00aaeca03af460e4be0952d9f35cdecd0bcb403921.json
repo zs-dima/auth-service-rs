@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.users\n               SET deleted_at = NOW(),\n                   status = 'deleted'\n             WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c49af972599d22df3e9bbc00aaeca03af460e4be0952d9f35cdecd0bcb403921"
+}

@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT auth.link_oauth_provider($1, $2, $3, $4, $5, $6, $7) AS \"id_user!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id_user!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "auth.oauth_provider",
+            "kind": {
+              "Enum": [
+                "google",
+                "github",
+                "microsoft",
+                "apple",
+                "facebook"
+              ]
+            }
+          }
+        },
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "12c638fca27ff0f3845a18b8dd814ce73bfbb4264db7e6bf31e90fae32d36cdf"
+}

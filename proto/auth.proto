@@ -3,6 +3,7 @@ syntax = "proto3";
 package auth;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
 
 import "validate/validate.proto";
 
@@ -29,6 +30,14 @@ service AuthService {
   rpc ConfirmAvatarUpload(ConfirmAvatarUploadRequest) returns (core.ResultReply);
   // Delete user avatar from S3
   rpc DeleteUserAvatar(UserId) returns (core.ResultReply);
+
+  // Session management
+  // List all active sessions for the current user
+  rpc ListSessions(google.protobuf.Empty) returns (ListSessionsReply);
+  // Revoke a specific session
+  rpc RevokeSession(RevokeSessionRequest) returns (core.ResultReply);
+  // Revoke all sessions except current
+  rpc RevokeOtherSessions(google.protobuf.Empty) returns (RevokeSessionsReply);
 }
 
 message ResetPasswordRequest {
@@ -45,7 +54,7 @@ message SignInRequest {
   string     email           = 1 [(validate.rules).string.email = true];
   string     password        = 2 [(validate.rules).string.min_len = 5];
   core.UUID  installation_id = 3 [(validate.rules).message.required = true];
-  DeviceInfo device_info     = 4 [(validate.rules).message.required = true];
+  ClientInfo client_info     = 4 [(validate.rules).message.required = true];
 }
 
 message LoadUsersInfoRequest {
@@ -53,16 +62,14 @@ message LoadUsersInfoRequest {
   repeated core.UUID user_ids = 2; // Optional; if empty, load all users
 }
 
-message DeviceInfo {
-  core.UUID id      = 1 [(validate.rules).message.required = true];
-  string    model   = 2;
-  string    name    = 3;
-  OsInfo    os_info = 4;
-}
-
-message OsInfo {
-  string os      = 1;
-  string version = 2;
+// Client information sent with authentication requests
+// Note: user_agent is extracted server-side from HTTP headers (like ip_address)
+message ClientInfo {
+  string                 device_id      = 1 [(validate.rules).string = {max_len: 255}]; // Unique device/client identifier
+  string                 device_name    = 2 [(validate.rules).string = {max_len: 255}]; // Human-readable device name: "John's iPhone", "Work Laptop"
+  string                 device_type    = 3 [(validate.rules).string = {max_len: 50}]; // 'mobile', 'tablet', 'desktop', 'web', 'unknown'
+  string                 client_version = 4 [(validate.rules).string = {max_len: 100}]; // App/client version: "1.2.3", "2.0.0-beta"
+  google.protobuf.Struct metadata       = 5; // Additional client metadata (device_model, os_info, fingerprint, capabilities, etc.)
 }
 
 message RefreshTokenRequest {
@@ -101,6 +108,42 @@ message User {
   string    email   = 3;
   UserRole  role    = 4;
   bool      deleted = 5;
+}
+
+// =============================================================================
+// Session Management Messages
+// =============================================================================
+
+// Session information returned to clients
+message SessionInfo {
+  string                 device_id      = 1; // Unique device identifier
+  string                 device_name    = 2; // Human-readable device name
+  string                 device_type    = 3; // 'mobile', 'tablet', 'desktop', 'web', 'unknown'
+  string                 client_version = 4; // App version
+  string                 ip_address     = 5; // Last seen IP address (may be masked for privacy)
+  string                 ip_country     = 6; // ISO 3166-1 alpha-2 country code
+  int64                  created_at     = 7; // Session creation timestamp (Unix millis)
+  int64                  last_seen_at   = 8; // Last activity timestamp (Unix millis)
+  int64                  expires_at     = 9; // Session expiration timestamp (Unix millis)
+  bool                   is_current     = 10; // True if this is the current session
+  string                 ip_created_by  = 11; // IP address at session creation
+  int32                  activity_count = 12; // Number of token refreshes (activity indicator)
+  google.protobuf.Struct metadata       = 13; // Session metadata (user agent, fingerprint, etc.)
+}
+
+// Response for listing sessions
+message ListSessionsReply {
+  repeated SessionInfo sessions = 1;
+}
+
+// Request to revoke a specific session by device_id
+message RevokeSessionRequest {
+  string device_id = 1 [(validate.rules).string = {min_len: 1, max_len: 255}];
+}
+
+// Response for revoking multiple sessions
+message RevokeSessionsReply {
+  int32 revoked_count = 1; // Number of sessions revoked
 }
 
 // Request for presigned upload URL

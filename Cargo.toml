@@ -50,11 +50,12 @@ http = "1.4"
 axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1", "http2"] }
 
 # Static hash sets (compile-time perfect hash)
-phf = { version = "0.11", features = ["macros"] }
+phf = { version = "0.13", features = ["macros"] }
 
 # Authentication
 argon2 = "0.5"
 secrecy = { version = "0.10", features = ["serde"] }
+sha2 = "0.10"
 
 # Streaming
 async-stream = "0.3"
@@ -63,12 +64,17 @@ async-stream = "0.3"
 uuid = { version = "1.16", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ipnetwork = "0.20"
 
 # Configuration
 clap = { version = "4.5", features = ["derive", "env"] }
 
 # URL encoding
 urlencoding = "2.1"
+
+# GeoIP lookup
+maxminddb = "0.27"
 
 # Observability (re-exported from auth-telemetry, but needed for macros)
 tracing = "0.1"

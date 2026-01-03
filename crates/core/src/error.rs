@@ -29,6 +29,9 @@ pub enum AppError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Already exists: {0}")]
+    AlreadyExists(String),
+
     #[error("Unavailable: {0}")]
     Unavailable(String),
 
@@ -55,7 +58,7 @@ impl From<AppError> for Status {
             AppError::Unauthenticated(msg) => Status::unauthenticated(msg),
             AppError::PermissionDenied(msg) => Status::permission_denied(msg),
             AppError::InvalidArgument(msg) => Status::invalid_argument(msg),
-            AppError::Conflict(msg) => Status::already_exists(msg),
+            AppError::Conflict(msg) | AppError::AlreadyExists(msg) => Status::already_exists(msg),
             AppError::Unavailable(msg) => Status::unavailable(msg),
             AppError::Internal(msg) => {
                 error!(error = %msg, "Internal error");

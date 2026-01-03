@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO auth.sessions (\n                id_user, refresh_token, expires_at,\n                device_id, device_name, device_type, client_version,\n                ip_created_by, ip_address, ip_country\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Inet",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a39c50fffea3bd0814a81d55bfe71078e515b6841615401cb43d24ea780dadff"
+}

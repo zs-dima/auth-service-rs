@@ -13,6 +13,7 @@ use phf::phf_set;
 use tower::{Layer, Service};
 use tracing::{Span, debug};
 
+use super::client_ip::ClientIp;
 use crate::core::{AuthInfo, JwtError, JwtValidator};
 
 /// Public routes that bypass authentication.
@@ -80,6 +81,10 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+        // Extract and inject client IP into request extensions
+        let client_ip = ClientIp::from_request(&req);
+        req.extensions_mut().insert(client_ip);
+
         // Allow CORS preflight
         if req.method() == http::Method::OPTIONS {
             let mut inner = self.inner.clone();

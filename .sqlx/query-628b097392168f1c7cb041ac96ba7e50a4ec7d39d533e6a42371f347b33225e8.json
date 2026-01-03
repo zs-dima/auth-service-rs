@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO auth.oauth_states (state, code_verifier, provider, redirect_uri)\n            VALUES ($1, $2, $3, $4)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        {
+          "Custom": {
+            "name": "auth.oauth_provider",
+            "kind": {
+              "Enum": [
+                "google",
+                "github",
+                "microsoft",
+                "apple",
+                "facebook"
+              ]
+            }
+          }
+        },
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "628b097392168f1c7cb041ac96ba7e50a4ec7d39d533e6a42371f347b33225e8"
+}

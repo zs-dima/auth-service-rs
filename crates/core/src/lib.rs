@@ -15,5 +15,5 @@ pub mod validation;
 pub use error::{AppError, OptionStatusExt, StatusExt};
 #[cfg(feature = "jwt")]
 pub use jwt::{AuthInfo, JwtError, JwtSubject, JwtValidator, TokenGenerator, UserRole};
-pub use proto_ext::{ToProtoUuid, UuidExt};
+pub use proto_ext::{ToProtoUuid, UuidExt, json_to_proto_struct, proto_struct_to_json};
 pub use validation::ValidateExt;

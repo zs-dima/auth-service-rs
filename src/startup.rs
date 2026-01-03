@@ -19,7 +19,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{Level, info};
 
 use crate::config::Config;
-use crate::core::JwtValidator;
+use crate::core::{GeolocationService, JwtValidator};
 use crate::middleware::{AuthLayer, RequestIdLayer};
 use crate::routes::rest_routes;
 use crate::services::AuthServiceImpl;
@@ -56,16 +56,25 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
     // S3 storage
     let s3_storage = init_s3(config).await;
 
+    // GeoIP service
+    let geolocation = GeolocationService::new(config.geoip_db_path.clone());
+    if geolocation.is_available() {
+        info!("GeoIP service initialized");
+    } else {
+        info!("GeoIP service disabled (no database configured)");
+    }
+
     // Server address
     let addr: SocketAddr = config.grpc_address.parse()?;
 
-    // Build auth service with shared validator
+    // Build auth service with shared validator and geolocation
     let auth_service = AuthServiceImpl::new(
         jwt_validator.clone(),
         config.access_token_ttl_minutes,
         config.refresh_token_ttl_days,
         database.clone(),
         s3_storage.clone(),
+        geolocation.clone(),
     );
 
     // Health reporter

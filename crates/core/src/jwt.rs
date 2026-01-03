@@ -81,7 +81,7 @@ pub struct AuthInfo {
     #[allow(dead_code)] // Used by consumers for display
     pub name: String,
     pub role: UserRole,
-    pub device_id: Uuid,
+    pub device_id: String,
     pub installation_id: Uuid,
 }
 
@@ -163,7 +163,9 @@ impl TryFrom<Claims> for AuthInfo {
     fn try_from(claims: Claims) -> Result<Self, Self::Error> {
         Ok(Self {
             user_id: Uuid::parse_str(&claims.sub).map_err(|_| JwtError::InvalidClaim("sub"))?,
-            device_id: Uuid::parse_str(&claims.device_id)
+            device_id: claims
+                .device_id
+                .parse()
                 .map_err(|_| JwtError::InvalidClaim("device_id"))?,
             installation_id: Uuid::parse_str(&claims.installation_id)
                 .map_err(|_| JwtError::InvalidClaim("installation_id"))?,
@@ -211,7 +213,7 @@ impl JwtValidator {
     pub fn generate_access_token<T: JwtSubject>(
         &self,
         subject: &T,
-        device_id: &Uuid,
+        device_id: &str,
         installation_id: &Uuid,
         ttl_minutes: u64,
     ) -> Result<String, AppError> {
@@ -318,7 +320,7 @@ mod tests {
     #[test]
     fn generate_and_validate_access_token() {
         let user = test_user();
-        let device_id = Uuid::new_v4();
+        let device_id = "device-123";
         let installation_id = Uuid::new_v4();
         let validator = JwtValidator::new(&test_secret());
 
@@ -346,7 +348,7 @@ mod tests {
     #[test]
     fn claims_roundtrip() {
         let user = test_user();
-        let device_id = Uuid::new_v4();
+        let device_id = "device-123";
         let installation_id = Uuid::new_v4();
         let validator = JwtValidator::new(&test_secret());
 
@@ -374,7 +376,7 @@ mod tests {
             email: "admin@test.com".to_string(),
             name: "Admin".to_string(),
             role: UserRole::Administrator,
-            device_id: Uuid::new_v4(),
+            device_id: "device-123".to_string(),
             installation_id: Uuid::new_v4(),
         };
 
@@ -383,7 +385,7 @@ mod tests {
             email: "user@test.com".to_string(),
             name: "User".to_string(),
             role: UserRole::User,
-            device_id: Uuid::new_v4(),
+            device_id: "device-123".to_string(),
             installation_id: Uuid::new_v4(),
         };
 

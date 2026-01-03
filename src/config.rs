@@ -101,6 +101,10 @@ pub struct Config {
     /// S3 secret access key
     #[arg(long, env = "S3_SECRET_ACCESS_KEY")]
     pub s3_secret_access_key: Option<String>,
+
+    /// GeoIP database path (MaxMind GeoLite2-Country.mmdb)
+    #[arg(long, env = "GEOIP_DB_PATH")]
+    pub geoip_db_path: Option<String>,
 }
 
 /// Configuration validation errors.
@@ -195,6 +199,7 @@ mod tests {
             s3_url: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
+            geoip_db_path: None,
         }
     }
 

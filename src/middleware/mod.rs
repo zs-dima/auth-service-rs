@@ -17,7 +17,9 @@
 //! 5. `AuthLayer` - JWT authentication (skips public routes)
 
 pub mod auth;
+pub mod client_ip;
 pub mod request_id;
 
 pub use auth::AuthLayer;
+pub use client_ip::ClientIp;
 pub use request_id::RequestIdLayer;
