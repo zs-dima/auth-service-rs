@@ -411,3 +411,26 @@ pub struct TouchSessionResult {
     pub id_user: Option<Uuid>,
     pub expires_at: Option<DateTime<Utc>>,
 }
+
+// =============================================================================
+// Password Reset Token
+// =============================================================================
+
+/// Password reset token from `auth.password_reset_tokens` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct PasswordResetToken {
+    pub id: Uuid,
+    pub id_user: Uuid,
+    pub token_hash: Vec<u8>, // SHA-256 hash (32 bytes)
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for creating a password reset token.
+#[derive(Debug, Clone)]
+pub struct CreatePasswordResetTokenParams {
+    pub id_user: Uuid,
+    pub token_hash: Vec<u8>,
+    pub expires_at: DateTime<Utc>,
+}

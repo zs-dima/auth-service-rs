@@ -29,6 +29,7 @@ path = "src/main.rs"
 # Workspace crates
 auth-core = { path = "crates/core" }
 auth-db = { path = "crates/db" }
+auth-email = { path = "crates/email" }
 auth-proto = { path = "crates/proto" }
 auth-storage = { path = "crates/storage" }
 auth-telemetry = { path = "crates/telemetry" }

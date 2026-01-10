@@ -275,6 +275,17 @@ impl TokenGenerator {
 
         Ok((token, expires_at))
     }
+
+    /// Generate a secure random token (URL-safe base64 string).
+    ///
+    /// Used for password reset tokens and similar one-time use cases.
+    /// Returns a 43-character URL-safe string with 256 bits of entropy.
+    #[must_use]
+    pub fn generate_secure_token() -> String {
+        let mut bytes = [0u8; REFRESH_TOKEN_BYTES];
+        rand::rng().fill_bytes(&mut bytes);
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+    }
 }
 
 #[cfg(test)]

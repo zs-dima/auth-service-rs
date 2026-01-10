@@ -9,9 +9,10 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::models::{
-    ConsumedOAuthState, CreateOAuthStateParams, CreateSessionParams, CreateUserWithProfileParams,
-    LinkOAuthProviderParams, OAuthProvider, SessionInfo, TouchSessionResult, UpdateUserParams,
-    UpdateUserProfileParams, User, UserInfo, UserStatus, UserWithProfile,
+    ConsumedOAuthState, CreateOAuthStateParams, CreatePasswordResetTokenParams,
+    CreateSessionParams, CreateUserWithProfileParams, LinkOAuthProviderParams, OAuthProvider,
+    SessionInfo, TouchSessionResult, UpdateUserParams, UpdateUserProfileParams, User, UserInfo,
+    UserStatus, UserWithProfile,
 };
 
 /// Database configuration.
@@ -626,6 +627,7 @@ pub struct Database {
     pub users: UserRepository,
     pub sessions: SessionRepository,
     pub oauth_states: OAuthStateRepository,
+    pub password_resets: PasswordResetRepository,
     pool: PgPool,
 }
 
@@ -636,6 +638,7 @@ impl Database {
             users: UserRepository::new(pool.clone()),
             sessions: SessionRepository::new(pool.clone()),
             oauth_states: OAuthStateRepository::new(pool.clone()),
+            password_resets: PasswordResetRepository::new(pool.clone()),
             pool,
         }
     }
@@ -651,5 +654,114 @@ impl Database {
     /// Get the underlying connection pool.
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+}
+
+// =============================================================================
+// Password Reset Repository
+// =============================================================================
+
+/// Password reset token repository for `auth.password_reset_tokens` operations.
+#[derive(Debug, Clone)]
+pub struct PasswordResetRepository {
+    pool: PgPool,
+}
+
+impl PasswordResetRepository {
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new password reset token.
+    /// Invalidates any existing tokens for the user.
+    pub async fn create_token(
+        &self,
+        params: CreatePasswordResetTokenParams,
+    ) -> Result<Uuid, AppError> {
+        // First, invalidate any existing unused tokens for this user
+        sqlx::query!(
+            r#"
+            UPDATE auth.password_reset_tokens
+               SET used_at = NOW()
+             WHERE id_user = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+            "#,
+            params.id_user
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+
+        // Create new token
+        sqlx::query_scalar!(
+            r#"
+            INSERT INTO auth.password_reset_tokens (id_user, token_hash, expires_at)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            "#,
+            params.id_user,
+            &params.token_hash,
+            params.expires_at
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Unavailable(e.to_string()))
+    }
+
+    /// Validate and consume a password reset token.
+    /// Returns the user_id if valid, marks token as used.
+    pub async fn consume_token(&self, token_hash: &[u8]) -> Result<Uuid, AppError> {
+        let result = sqlx::query_scalar!(
+            r#"
+            UPDATE auth.password_reset_tokens
+               SET used_at = NOW()
+             WHERE token_hash = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+            RETURNING id_user
+            "#,
+            token_hash
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+
+        result.ok_or_else(|| AppError::NotFound("Invalid or expired reset token".to_string()))
+    }
+
+    /// Check if a token hash is valid without consuming it.
+    pub async fn validate_token(&self, token_hash: &[u8]) -> Result<Uuid, AppError> {
+        let result = sqlx::query_scalar!(
+            r#"
+            SELECT id_user
+              FROM auth.password_reset_tokens
+             WHERE token_hash = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+            "#,
+            token_hash
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+
+        result.ok_or_else(|| AppError::NotFound("Invalid or expired reset token".to_string()))
+    }
+
+    /// Cleanup expired tokens (run periodically).
+    pub async fn cleanup_expired(&self) -> Result<i64, AppError> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM auth.password_reset_tokens
+             WHERE expires_at < NOW() - INTERVAL '1 day'
+                OR used_at < NOW() - INTERVAL '1 day'
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+
+        Ok(result.rows_affected() as i64)
     }
 }

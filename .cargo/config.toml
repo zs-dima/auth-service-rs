@@ -1,0 +1,4 @@
+# Workaround for VS2026 LNK1318 PDB size limit error
+# This disables PDB generation in debug builds
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/DEBUG:NONE"]

@@ -10,9 +10,10 @@ use auth_core::{
     proto_struct_to_json,
 };
 use auth_db::{
-    CreateSessionParams, CreateUserWithProfileParams, Database, UpdateUserParams,
-    UpdateUserProfileParams, UserStatus, UserWithProfile, proto_to_role,
+    CreatePasswordResetTokenParams, CreateSessionParams, CreateUserWithProfileParams, Database,
+    UpdateUserParams, UpdateUserProfileParams, UserStatus, UserWithProfile, proto_to_role,
 };
+use auth_email::EmailService;
 use auth_proto::auth::auth_service_server::AuthService;
 use auth_proto::auth::{
     AuthInfo, AvatarUploadUrl, ConfirmAvatarUploadRequest, CreateUserRequest,
@@ -23,6 +24,7 @@ use auth_proto::auth::{
 };
 use auth_proto::core::ResultReply;
 use auth_storage::S3Storage;
+use chrono::Utc;
 use ipnetwork::IpNetwork;
 use sha2::{Digest, Sha256};
 use tokio_stream::StreamExt;
@@ -84,8 +86,10 @@ pub struct AuthServiceImpl {
     jwt_validator: JwtValidator,
     access_token_ttl_minutes: u64,
     refresh_token_ttl_days: i64,
+    password_reset_ttl_minutes: u32,
     db: Database,
     s3: Option<Arc<S3Storage>>,
+    email: Option<Arc<EmailService>>,
     geolocation: GeolocationService,
 }
 
@@ -94,16 +98,20 @@ impl AuthServiceImpl {
         jwt_validator: JwtValidator,
         access_token_ttl_minutes: u64,
         refresh_token_ttl_days: i64,
+        password_reset_ttl_minutes: u32,
         db: Database,
         s3: Option<Arc<S3Storage>>,
+        email: Option<Arc<EmailService>>,
         geolocation: GeolocationService,
     ) -> Self {
         Self {
             jwt_validator,
             access_token_ttl_minutes,
             refresh_token_ttl_days,
+            password_reset_ttl_minutes,
             db,
             s3,
+            email,
             geolocation,
         }
     }
@@ -449,7 +457,8 @@ impl AuthService for AuthServiceImpl {
     /// Request password reset.
     ///
     /// Always returns success to prevent user enumeration attacks.
-    #[instrument(skip(self, request))]
+    /// Sends password reset email asynchronously if user exists.
+    #[instrument(skip(self, request), fields(email))]
     async fn reset_password(
         &self,
         request: Request<ResetPasswordRequest>,
@@ -458,16 +467,65 @@ impl AuthService for AuthServiceImpl {
         req.validate_or_status()?;
 
         let email = Self::canonical_email(&req.email);
+        tracing::Span::current().record("email", &email);
         debug!(email = %email, "Password reset requested");
 
+        // Check if email service is configured
+        let Some(email_service) = self.email.clone() else {
+            warn!("Password reset requested but email service not configured");
+            // Still return success to prevent enumeration
+            return Ok(Response::new(ResultReply { result: true }));
+        };
+
         let db = self.db.clone();
+        let password_reset_ttl_minutes = self.password_reset_ttl_minutes;
+
+        // Process asynchronously to prevent timing attacks
         tokio::spawn(async move {
-            if let Ok(user) = db.users.get_active_user_by_email(&email).await {
-                info!(user_id = %user.id, "Password reset token generated");
-                // TODO: Send email
+            // Look up user
+            let user = match db.users.get_active_user_by_email(&email).await {
+                Ok(user) => user,
+                Err(_) => {
+                    debug!(email = %email, "User not found for password reset");
+                    return;
+                }
+            };
+
+            // Generate secure token (URL-safe base64, 32 bytes of entropy)
+            let token = TokenGenerator::generate_secure_token();
+            let token_hash = hash_token(&token);
+
+            // Calculate expiration
+            let expires_at =
+                Utc::now() + chrono::Duration::minutes(i64::from(password_reset_ttl_minutes));
+
+            // Store token hash in database
+            if let Err(e) = db
+                .password_resets
+                .create_token(CreatePasswordResetTokenParams {
+                    id_user: user.id,
+                    token_hash,
+                    expires_at,
+                })
+                .await
+            {
+                error!(user_id = %user.id, error = %e, "Failed to create password reset token");
+                return;
             }
+
+            // Send email
+            if let Err(e) = email_service
+                .send_password_reset(&email, &user.display_name, &token, password_reset_ttl_minutes)
+                .await
+            {
+                error!(user_id = %user.id, error = %e, "Failed to send password reset email");
+                return;
+            }
+
+            info!(user_id = %user.id, "Password reset email sent");
         });
 
+        // Always return success to prevent user enumeration
         Ok(Response::new(ResultReply { result: true }))
     }
 

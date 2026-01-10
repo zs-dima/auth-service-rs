@@ -1,16 +1,41 @@
 //! Configuration with validation at compile time and runtime.
+//!
+//! Secrets can be provided via environment variables or files (for Docker/K8s secrets).
+//! File-based secrets take precedence: `DB_PASSWORD_FILE` overrides `DB_PASSWORD`.
 
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
+use tracing::debug;
 
 /// Minimum required JWT secret length for security (256 bits).
 const MIN_JWT_SECRET_LEN: usize = 32;
 
+/// Read a secret from a file, trimming whitespace.
+fn read_secret_file(path: &str) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(content) => Some(content.trim().to_string()),
+        Err(e) => {
+            debug!(path, error = %e, "Failed to read secret file");
+            None
+        }
+    }
+}
+
+/// Resolve a secret: file path takes precedence over direct value.
+fn resolve_secret(file_path: Option<&str>, direct_value: Option<&str>) -> Option<String> {
+    file_path
+        .and_then(read_secret_file)
+        .or_else(|| direct_value.map(String::from))
+}
+
 /// Authentication gRPC service configuration.
 ///
 /// All values can be set via environment variables or CLI arguments.
+/// Secrets support `*_FILE` variants for Docker/Kubernetes secrets.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "auth-service", about = "Authentication gRPC service")]
 pub struct Config {
@@ -30,9 +55,45 @@ pub struct Config {
     #[arg(long, env = "GRPC_API_REFLECTION", default_value = "false")]
     pub grpc_reflection: bool,
 
+    // =========================================================================
+    // Secrets (support both direct value and _FILE variants)
+    // =========================================================================
+
     /// JWT secret key for signing tokens (min 32 chars)
     #[arg(long, env = "JWT_SECRET_KEY")]
-    pub jwt_secret_key: SecretString,
+    jwt_secret_key: Option<SecretString>,
+
+    /// Path to file containing JWT secret key
+    #[arg(long, env = "JWT_SECRET_KEY_FILE")]
+    jwt_secret_key_file: Option<String>,
+
+    /// Database password (inserted into DB_URL)
+    #[arg(long, env = "DB_PASSWORD")]
+    db_password: Option<String>,
+
+    /// Path to file containing database password
+    #[arg(long, env = "DB_PASSWORD_FILE")]
+    db_password_file: Option<String>,
+
+    /// S3 secret access key
+    #[arg(long, env = "S3_SECRET_ACCESS_KEY")]
+    s3_secret_access_key: Option<String>,
+
+    /// Path to file containing S3 secret access key
+    #[arg(long, env = "S3_SECRET_ACCESS_KEY_FILE")]
+    s3_secret_access_key_file: Option<String>,
+
+    /// SMTP password (separate from SMTP_URL for security)
+    #[arg(long, env = "SMTP_PASSWORD")]
+    smtp_password: Option<String>,
+
+    /// Path to file containing SMTP password
+    #[arg(long, env = "SMTP_PASSWORD_FILE")]
+    smtp_password_file: Option<String>,
+
+    // =========================================================================
+    // Token TTLs
+    // =========================================================================
 
     /// Access token TTL in minutes
     #[arg(long, env = "ACCESS_TOKEN_TTL_MINUTES", default_value = "15")]
@@ -42,13 +103,17 @@ pub struct Config {
     #[arg(long, env = "REFRESH_TOKEN_TTL_DAYS", default_value = "7")]
     pub refresh_token_ttl_days: i64,
 
-    /// Database connection URL
+    /// Password reset token expiration in minutes (default: 30)
+    #[arg(long, env = "PASSWORD_RESET_TTL_MINUTES", default_value = "30")]
+    pub password_reset_ttl_minutes: u32,
+
+    // =========================================================================
+    // Database Configuration
+    // =========================================================================
+
+    /// Database connection URL (password placeholder: user:@host)
     #[arg(long, env = "DB_URL")]
     pub db_url: String,
-
-    /// Database password (URL-encoded and inserted into DB_URL)
-    #[arg(long, env = "DB_PASSWORD")]
-    pub db_password: Option<String>,
 
     /// Database pool minimum connections
     #[arg(long, env = "DB_POOL_MIN", default_value = "2")]
@@ -61,6 +126,10 @@ pub struct Config {
     /// Database connection timeout in seconds
     #[arg(long, env = "DB_CONNECT_TIMEOUT", default_value = "30")]
     pub db_connect_timeout_secs: u64,
+
+    // =========================================================================
+    // Logging & Observability
+    // =========================================================================
 
     /// Log level (TRACE, DEBUG, INFO, WARN, ERROR)
     #[arg(long, env = "LOG_LEVEL", default_value = "INFO")]
@@ -82,6 +151,10 @@ pub struct Config {
     #[arg(long, env = "ENVIRONMENT")]
     pub environment: Option<String>,
 
+    // =========================================================================
+    // Rate Limiting & Limits
+    // =========================================================================
+
     /// Max concurrent requests
     #[arg(long, env = "CONCURRENCY_LIMIT", default_value = "100")]
     pub rate_limit_rps: u64,
@@ -89,6 +162,10 @@ pub struct Config {
     /// Max photo upload size in bytes (default: 2MB)
     #[arg(long, env = "MAX_PHOTO_BYTES", default_value = "2097152")]
     pub max_photo_bytes: usize,
+
+    // =========================================================================
+    // S3 Storage Configuration
+    // =========================================================================
 
     /// S3 endpoint URL (e.g., http://localhost:9000/bucket-name/)
     #[arg(long, env = "S3_URL")]
@@ -98,13 +175,30 @@ pub struct Config {
     #[arg(long, env = "S3_ACCESS_KEY_ID")]
     pub s3_access_key_id: Option<String>,
 
-    /// S3 secret access key
-    #[arg(long, env = "S3_SECRET_ACCESS_KEY")]
-    pub s3_secret_access_key: Option<String>,
+    // =========================================================================
+    // GeoIP Configuration
+    // =========================================================================
 
     /// GeoIP database path (MaxMind GeoLite2-Country.mmdb)
     #[arg(long, env = "GEOIP_DB_PATH")]
     pub geoip_db_path: Option<String>,
+
+    // =========================================================================
+    // Email Configuration
+    // =========================================================================
+
+    /// Application domain (used for email links and sender address)
+    #[arg(long, env = "DOMAIN")]
+    pub domain: Option<String>,
+
+    /// SMTP URL (without password): smtp://user@host:port?tls=starttls
+    /// Password is provided separately via SMTP_PASSWORD or SMTP_PASSWORD_FILE
+    #[arg(long, env = "SMTP_URL")]
+    pub smtp_url: Option<String>,
+
+    /// Email sender (e.g., "App Name <noreply@example.com>")
+    #[arg(long, env = "SMTP_SENDER")]
+    pub smtp_sender: Option<String>,
 }
 
 /// Configuration validation errors.
@@ -112,6 +206,8 @@ pub struct Config {
 pub enum ConfigError {
     #[error("JWT secret must be at least {MIN_JWT_SECRET_LEN} characters")]
     JwtSecretTooShort,
+    #[error("JWT secret is required (set JWT_SECRET_KEY or JWT_SECRET_KEY_FILE)")]
+    JwtSecretMissing,
     #[error("Access token TTL must be > 0")]
     InvalidAccessTokenTtl,
     #[error("Refresh token TTL must be > 0")]
@@ -132,7 +228,11 @@ impl Config {
 
     /// Validate configuration values.
     fn validate(&self) -> Result<(), ConfigError> {
-        if self.jwt_secret_key.expose_secret().len() < MIN_JWT_SECRET_LEN {
+        let jwt_secret = self.jwt_secret_key();
+        if jwt_secret.is_none() {
+            return Err(ConfigError::JwtSecretMissing);
+        }
+        if jwt_secret.map(|s| s.expose_secret().len()).unwrap_or(0) < MIN_JWT_SECRET_LEN {
             return Err(ConfigError::JwtSecretTooShort);
         }
         if self.access_token_ttl_minutes == 0 {
@@ -153,21 +253,89 @@ impl Config {
         Ok(())
     }
 
+    // =========================================================================
+    // Secret Accessors (file takes precedence over direct value)
+    // =========================================================================
+
+    /// Get JWT secret key (from file or env var).
+    #[must_use]
+    pub fn jwt_secret_key(&self) -> Option<SecretString> {
+        self.jwt_secret_key_file
+            .as_deref()
+            .and_then(read_secret_file)
+            .map(SecretString::from)
+            .or_else(|| self.jwt_secret_key.clone())
+    }
+
+    /// Get database password (from file or env var).
+    #[must_use]
+    pub fn db_password(&self) -> Option<String> {
+        resolve_secret(
+            self.db_password_file.as_deref(),
+            self.db_password.as_deref(),
+        )
+    }
+
+    /// Get S3 secret access key (from file or env var).
+    #[must_use]
+    pub fn s3_secret_access_key(&self) -> Option<String> {
+        resolve_secret(
+            self.s3_secret_access_key_file.as_deref(),
+            self.s3_secret_access_key.as_deref(),
+        )
+    }
+
+    /// Get SMTP password (from file or env var).
+    #[must_use]
+    pub fn smtp_password(&self) -> Option<String> {
+        resolve_secret(
+            self.smtp_password_file.as_deref(),
+            self.smtp_password.as_deref(),
+        )
+    }
+
+    // =========================================================================
+    // Derived Configuration
+    // =========================================================================
+
     /// Get database connection timeout as Duration.
     #[inline]
+    #[must_use]
     pub const fn db_connect_timeout(&self) -> Duration {
         Duration::from_secs(self.db_connect_timeout_secs)
     }
 
     /// Build the database URL with password substitution.
+    #[must_use]
     pub fn database_url(&self) -> String {
-        match &self.db_password {
+        match self.db_password() {
             Some(password) => {
-                let encoded = urlencoding::encode(password);
+                let encoded = urlencoding::encode(&password);
                 self.db_url.replacen(":@", &format!(":{encoded}@"), 1)
             }
             None => self.db_url.clone(),
         }
+    }
+
+    /// Build SMTP URL with password inserted.
+    /// Takes smtp://user@host:port and inserts password as smtp://user:pass@host:port
+    #[must_use]
+    pub fn smtp_url_with_password(&self) -> Option<String> {
+        let url = self.smtp_url.as_ref()?;
+        match self.smtp_password() {
+            Some(password) => {
+                let encoded = urlencoding::encode(&password);
+                // Insert password after username: user@ -> user:pass@
+                Some(url.replacen("@", &format!(":{encoded}@"), 1))
+            }
+            None => Some(url.clone()),
+        }
+    }
+
+    /// Check if email sending is configured.
+    #[must_use]
+    pub fn email_enabled(&self) -> bool {
+        self.smtp_url.is_some() && self.smtp_sender.is_some() && self.domain.is_some()
     }
 }
 
@@ -181,11 +349,14 @@ mod tests {
             grpc_web: true,
             cors_allow_origins: None,
             grpc_reflection: false,
-            jwt_secret_key: SecretString::from("this_is_a_very_long_secret_key_32"),
+            jwt_secret_key: Some(SecretString::from("this_is_a_very_long_secret_key_32")),
+            jwt_secret_key_file: None,
             access_token_ttl_minutes: 15,
             refresh_token_ttl_days: 7,
+            password_reset_ttl_minutes: 30,
             db_url: "postgres://user:@localhost/auth".to_string(),
             db_password: Some("secret".to_string()),
+            db_password_file: None,
             db_pool_min: 2,
             db_pool_max: 10,
             db_connect_timeout_secs: 30,
@@ -199,7 +370,13 @@ mod tests {
             s3_url: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
+            s3_secret_access_key_file: None,
             geoip_db_path: None,
+            domain: Some("example.com".to_string()),
+            smtp_url: None,
+            smtp_password: None,
+            smtp_password_file: None,
+            smtp_sender: None,
         }
     }
 
@@ -215,9 +392,20 @@ mod tests {
     }
 
     #[test]
+    fn jwt_secret_missing_fails() {
+        let mut config = test_config();
+        config.jwt_secret_key = None;
+        config.jwt_secret_key_file = None;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::JwtSecretMissing)
+        ));
+    }
+
+    #[test]
     fn jwt_secret_too_short_fails() {
         let mut config = test_config();
-        config.jwt_secret_key = SecretString::from("short");
+        config.jwt_secret_key = Some(SecretString::from("short"));
         assert!(matches!(
             config.validate(),
             Err(ConfigError::JwtSecretTooShort)
@@ -233,5 +421,40 @@ mod tests {
             config.validate(),
             Err(ConfigError::InvalidPoolSize { .. })
         ));
+    }
+
+    #[test]
+    fn email_enabled_when_all_configured() {
+        let mut config = test_config();
+        config.smtp_url = Some("smtp://user@localhost:25".to_string());
+        config.smtp_sender = Some("Test <test@example.com>".to_string());
+        config.domain = Some("example.com".to_string());
+        assert!(config.email_enabled());
+    }
+
+    #[test]
+    fn email_disabled_when_missing_config() {
+        let config = test_config();
+        assert!(!config.email_enabled());
+    }
+
+    #[test]
+    fn smtp_url_with_password_inserts_password() {
+        let mut config = test_config();
+        config.smtp_url = Some("smtp://user@smtp.example.com:587".to_string());
+        config.smtp_password = Some("mypass".to_string());
+
+        let url = config.smtp_url_with_password().unwrap();
+        assert!(url.contains("user:mypass@"));
+    }
+
+    #[test]
+    fn smtp_url_without_password_returns_original() {
+        let mut config = test_config();
+        config.smtp_url = Some("smtp://localhost:25".to_string());
+        config.smtp_password = None;
+
+        let url = config.smtp_url_with_password().unwrap();
+        assert_eq!(url, "smtp://localhost:25");
     }
 }

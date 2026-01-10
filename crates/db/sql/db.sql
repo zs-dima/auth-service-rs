@@ -341,6 +341,47 @@ CREATE INDEX session_id_user_ix
 CREATE INDEX session_expires_at_ix
   ON sessions (expires_at);
 
+-- =====================================================
+-- PASSWORD_RESET_TOKENS TABLE - Password reset tokens
+-- =====================================================
+-- Stores secure password reset tokens with expiration.
+-- Tokens are single-use and expire after a short period.
+CREATE TABLE password_reset_tokens (
+  id            UUID PRIMARY KEY DEFAULT uuidv7(),
+  id_user       UUID NOT NULL
+                CONSTRAINT password_reset_id_user_fk
+                REFERENCES users(id) ON DELETE CASCADE,
+
+  -- Token storage (SHA-256 = 32 bytes, hash of the actual token)
+  token_hash    BYTEA NOT NULL
+                CONSTRAINT password_reset_token_len_ck
+                CHECK (octet_length(token_hash) = 32),
+
+  -- Expiration and usage tracking
+  expires_at    TIMESTAMPTZ NOT NULL,
+  used_at       TIMESTAMPTZ,       -- NULL if not yet used, set when consumed
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT password_reset_expires_ck
+    CHECK (expires_at > created_at)
+);
+COMMENT ON TABLE password_reset_tokens IS 'Password reset tokens - single use, short expiry';
+COMMENT ON COLUMN password_reset_tokens.token_hash IS 'SHA-256 hash of the reset token (32 bytes)';
+
+-- Index for token lookup
+CREATE INDEX password_reset_token_hash_ix
+  ON password_reset_tokens (token_hash)
+  WHERE used_at IS NULL;
+
+-- Index for cleanup job
+CREATE INDEX password_reset_expires_ix
+  ON password_reset_tokens (expires_at);
+
+-- Index for finding user's active tokens
+CREATE INDEX password_reset_user_ix
+  ON password_reset_tokens (id_user, expires_at DESC)
+  WHERE used_at IS NULL;
+
 -- =============================================================================
 -- FUNCTIONS
 -- =============================================================================

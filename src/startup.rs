@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use auth_db::{Database, DbConfig, create_pool};
+use auth_email::{EmailConfig, EmailService};
 use auth_proto::auth::auth_service_server::AuthServiceServer;
 use auth_storage::{S3Config, S3Storage};
 use axum::Router;
@@ -16,7 +17,7 @@ use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{Level, info};
+use tracing::{Level, info, warn};
 
 use crate::config::Config;
 use crate::core::{GeolocationService, JwtValidator};
@@ -35,12 +36,16 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 pub struct AppState {
     pub db: Database,
     pub s3: Option<Arc<S3Storage>>,
+    pub email: Option<Arc<EmailService>>,
 }
 
 /// Build and configure the complete application.
 pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> {
     // Create shared JWT validator once
-    let jwt_validator = JwtValidator::new(&config.jwt_secret_key);
+    let jwt_secret = config
+        .jwt_secret_key()
+        .expect("JWT secret is required (validated in Config::init)");
+    let jwt_validator = JwtValidator::new(&jwt_secret);
 
     // Database
     let db_config = DbConfig {
@@ -54,7 +59,10 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
     let database = Database::new(pool);
 
     // S3 storage
-    let s3_storage = init_s3(config).await;
+    let s3_storage = init_s3(config);
+
+    // Email service
+    let email_service = init_email(config);
 
     // GeoIP service
     let geolocation = GeolocationService::new(config.geoip_db_path.clone());
@@ -72,8 +80,10 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
         jwt_validator.clone(),
         config.access_token_ttl_minutes,
         config.refresh_token_ttl_days,
+        config.password_reset_ttl_minutes,
         database.clone(),
         s3_storage.clone(),
+        email_service.clone(),
         geolocation.clone(),
     );
 
@@ -103,6 +113,7 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
     let app_state = AppState {
         db: database,
         s3: s3_storage,
+        email: email_service,
     };
 
     // Build REST routes
@@ -145,20 +156,44 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
     Ok((app, addr))
 }
 
-async fn init_s3(config: &Config) -> Option<Arc<S3Storage>> {
+fn init_s3(config: &Config) -> Option<Arc<S3Storage>> {
+    let secret = config.s3_secret_access_key();
+    if let (Some(url), Some(key), Some(secret)) = (&config.s3_url, &config.s3_access_key_id, secret)
+    {
+        let s3_config = S3Config::from_url(url, key.clone(), secret).expect("Invalid S3 URL");
+        Some(Arc::new(S3Storage::new(s3_config)))
+    } else {
+        info!("S3 not configured");
+        None
+    }
+}
+
+fn init_email(config: &Config) -> Option<Arc<EmailService>> {
     match (
-        &config.s3_url,
-        &config.s3_access_key_id,
-        &config.s3_secret_access_key,
+        config.smtp_url_with_password(),
+        &config.smtp_sender,
+        &config.domain,
     ) {
-        (Some(url), Some(key), Some(secret)) => {
-            let s3_config =
-                S3Config::from_url(url, key.clone(), secret.clone()).expect("Invalid S3 URL");
-            let storage = S3Storage::new(s3_config).await.expect("Failed to init S3");
-            Some(Arc::new(storage))
+        (Some(smtp_url), Some(sender), Some(domain)) => {
+            match EmailConfig::from_url(&smtp_url, sender, domain) {
+                Ok(email_config) => match EmailService::new(email_config) {
+                    Ok(service) => {
+                        info!("Email service initialized");
+                        Some(Arc::new(service))
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to initialize email service");
+                        None
+                    }
+                },
+                Err(e) => {
+                    warn!(error = %e, "Invalid SMTP configuration");
+                    None
+                }
+            }
         }
         _ => {
-            info!("S3 not configured");
+            info!("Email not configured (SMTP_URL, SMTP_SENDER, and DOMAIN required)");
             None
         }
     }
