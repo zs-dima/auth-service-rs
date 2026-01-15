@@ -1,8 +1,8 @@
 [package]
 name = "auth-db"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
 description = "Database layer with SQLx for auth services"
 
 [dependencies]
@@ -29,9 +29,5 @@ tonic = "0.14"
 # Tracing
 tracing = "0.1"
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = "warn"
-pedantic = "warn"
+[lints]
+workspace = true

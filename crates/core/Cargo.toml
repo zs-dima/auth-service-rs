@@ -1,13 +1,13 @@
 [package]
 name = "auth-core"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
 description = "Shared core types, traits, and error handling for auth services"
 
 [features]
 default = ["jwt"]
-jwt = ["jsonwebtoken", "secrecy", "chrono", "rand", "base64", "serde"]
+jwt = ["jsonwebtoken", "secrecy", "chrono", "rand", "base64", "serde", "sha2"]
 
 [dependencies]
 # Error handling
@@ -33,10 +33,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 rand = { version = "0.9", optional = true }
 base64 = { version = "0.22", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
+sha2 = { version = "0.10", optional = true }
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = "warn"
-pedantic = "warn"
+[lints]
+workspace = true

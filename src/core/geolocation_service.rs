@@ -1,33 +1,41 @@
+//! `GeoIP` lookup service for IP address to country code resolution.
+//!
+//! Uses `MaxMind` `GeoLite2` Country database for offline, fast lookups.
+//! Returns ISO 3166-1 alpha-2 country codes or "ZZ" for private IPs.
+
 use maxminddb::{MaxMindDbError, Reader};
 use std::net::IpAddr;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-/// Geolocation service for IP address to country code lookup
-/// Uses MaxMind GeoLite2 Country database for offline, fast lookups
+/// Geolocation service for IP address to country code lookup.
+///
+/// Uses `MaxMind` `GeoLite2` Country database for offline, fast lookups.
 #[derive(Clone)]
 pub struct GeolocationService {
     reader: Option<Arc<Reader<Vec<u8>>>>,
 }
 
 impl GeolocationService {
-    /// Create a new geolocation service with optional database path
-    /// If path is None or database fails to load, service will work in degraded mode (returning None)
+    /// Create a new geolocation service with optional database path.
+    ///
+    /// If path is None or database fails to load, service will work in degraded mode (returning None).
+    #[must_use]
     pub fn new(db_path: Option<String>) -> Self {
-        match db_path {
-            Some(path) => Self::with_database_path(&path),
-            None => {
-                debug!("GeoIP database path not configured. Geolocation will be disabled.");
-                Self { reader: None }
-            }
+        if let Some(path) = db_path {
+            Self::with_database_path(&path)
+        } else {
+            debug!("GeoIP database path not configured. Geolocation will be disabled.");
+            Self { reader: None }
         }
     }
 
-    /// Create a new geolocation service with a custom database path
+    /// Create a new geolocation service with a custom database path.
+    #[must_use]
     pub fn with_database_path(path: &str) -> Self {
         match Self::load_database(path) {
             Ok(reader) => {
-                debug!("GeoIP database loaded successfully from {}", path);
+                debug!("GeoIP database loaded successfully from {path}");
                 Self {
                     reader: Some(Arc::new(reader)),
                 }
@@ -42,12 +50,12 @@ impl GeolocationService {
         }
     }
 
-    /// Load MaxMind database from file
+    /// Load `MaxMind` database from file.
     fn load_database(path: &str) -> Result<Reader<Vec<u8>>, MaxMindDbError> {
         Reader::open_readfile(path)
     }
 
-    /// Check if IP address is private/local
+    /// Check if IP address is private/local.
     fn is_private_ip(ip: IpAddr) -> bool {
         match ip {
             IpAddr::V4(v4) => {
@@ -62,41 +70,37 @@ impl GeolocationService {
         }
     }
 
-    /// Get ISO 3166-1 alpha-2 country code for an IP address
+    /// Get ISO 3166-1 alpha-2 country code for an IP address.
+    ///
     /// Returns:
-    /// - Some("ZZ") for private/local IP addresses
-    /// - Some(country_code) for public IP addresses found in database
-    /// - None if database is not loaded or lookup fails
+    /// - `Some("ZZ")` for private/local IP addresses
+    /// - `Some(country_code)` for public IP addresses found in database
+    /// - `None` if database is not loaded or lookup fails
+    #[must_use]
     pub fn get_country_code(&self, ip: IpAddr) -> Option<String> {
         // Check if IP is private/local
         if Self::is_private_ip(ip) {
-            debug!("IP {} is private/local, returning ZZ", ip);
+            debug!("IP {ip} is private/local, returning ZZ");
             return Some("ZZ".to_string());
         }
 
         let reader = self.reader.as_ref()?;
 
-        // Perform lookup
-        match reader.lookup(ip) {
-            Ok(lookup_result) => match lookup_result.decode::<CountryRecord>() {
-                Ok(Some(record)) => {
-                    let country_code = record.country?.iso_code?;
-                    debug!("IP {} resolved to country: {}", ip, country_code);
-                    Some(country_code.to_string())
-                }
-                _ => {
-                    debug!("IP {} not found or error in GeoIP database", ip);
-                    None
-                }
-            },
-            Err(_) => {
-                debug!("IP {} not found or error in GeoIP database", ip);
-                None
-            }
+        // Perform lookup using let-chains
+        if let Ok(lookup_result) = reader.lookup(ip)
+            && let Ok(Some(record)) = lookup_result.decode::<CountryRecord>()
+            && let Some(country_code) = record.country?.iso_code
+        {
+            debug!("IP {ip} resolved to country: {country_code}");
+            return Some(country_code);
         }
+
+        debug!("IP {ip} not found or error in GeoIP database");
+        None
     }
 
-    /// Check if geolocation service is available
+    /// Check if geolocation service is available.
+    #[must_use]
     pub fn is_available(&self) -> bool {
         self.reader.is_some()
     }
@@ -108,7 +112,7 @@ impl Default for GeolocationService {
     }
 }
 
-/// MaxMind GeoLite2 Country database record structure
+/// `MaxMind` `GeoLite2` Country database record structure.
 #[derive(serde::Deserialize)]
 struct CountryRecord {
     country: Option<Country>,
@@ -126,12 +130,12 @@ mod tests {
 
     #[test]
     fn test_service_creation() {
-        let service = GeolocationService::new(None);
+        let _service = GeolocationService::new(None);
         // Service should be created even if database is not available
-        //assert!(true);
     }
 
     #[test]
+    #[allow(clippy::ip_constant)]
     fn test_private_ip_returns_zz() {
         let service = GeolocationService::new(Some("./assets/GeoLite2-Country.mmdb".to_string()));
 
@@ -140,8 +144,8 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
             IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)),
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         ];
 
         for ip in private_ips {
@@ -149,8 +153,7 @@ mod tests {
             assert_eq!(
                 result,
                 Some("ZZ".to_string()),
-                "Private IP {} should return ZZ",
-                ip
+                "Private IP {ip} should return ZZ"
             );
         }
     }
@@ -161,8 +164,8 @@ mod tests {
 
         // Private/special IPv6 addresses
         let private_ips = vec![
-            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), // ::1 loopback
-            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)), // :: unspecified
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             IpAddr::V6(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 1)), // multicast
         ];
 
@@ -171,8 +174,7 @@ mod tests {
             assert_eq!(
                 result,
                 Some("ZZ".to_string()),
-                "Private IPv6 {} should return ZZ",
-                ip
+                "Private IPv6 {ip} should return ZZ"
             );
         }
     }
@@ -216,7 +218,7 @@ mod tests {
         if let Some(country) = result {
             // This IP is in Georgia
             assert_eq!(country, "GE", "IP 188.169.57.69 should be in GE");
-            println!("IP 188.169.57.69 country: {}", country);
+            println!("IP 188.169.57.69 country: {country}");
         }
     }
 
@@ -239,11 +241,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::ip_constant)]
     fn test_broadcast_ip_returns_zz() {
         let service = GeolocationService::new(Some("./assets/GeoLite2-Country.mmdb".to_string()));
 
         // Broadcast address is considered special/private
-        let broadcast = IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255));
+        let broadcast = IpAddr::V4(Ipv4Addr::BROADCAST);
         let result = service.get_country_code(broadcast);
         assert_eq!(
             result,
@@ -270,7 +273,7 @@ mod tests {
         }
 
         // Test local/private IPs - should all return ZZ
-        let local_ips = vec![
+        let local_ips = [
             ("127.0.0.1", "ZZ"),       // Loopback
             ("192.168.1.1", "ZZ"),     // Private network
             ("10.0.0.1", "ZZ"),        // Private network
@@ -285,14 +288,12 @@ mod tests {
             assert_eq!(
                 result,
                 Some(expected.to_string()),
-                "IP {} should return {}",
-                ip_str,
-                expected
+                "IP {ip_str} should return {expected}"
             );
         }
 
         // Test public IPs - should return actual country codes
-        let public_ips = vec![
+        let public_ips = [
             ("8.8.8.8", "US"),       // Google DNS
             ("188.169.57.69", "GE"), // Georgia
         ];
@@ -301,11 +302,7 @@ mod tests {
             let ip: IpAddr = ip_str.parse().unwrap();
             let result = service.get_country_code(ip);
             if let Some(country) = result {
-                assert_eq!(
-                    country, expected,
-                    "IP {} should return {}",
-                    ip_str, expected
-                );
+                assert_eq!(country, expected, "IP {ip_str} should return {expected}");
             }
         }
     }

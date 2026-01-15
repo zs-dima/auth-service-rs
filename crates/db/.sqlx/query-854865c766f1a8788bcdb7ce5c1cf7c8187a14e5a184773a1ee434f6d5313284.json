@@ -1,0 +1,130 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT u.id,\n                   u.role,\n                   u.email,\n                   u.email_verified,\n                   u.phone,\n                   u.phone_verified,\n                   u.status AS \"status: UserStatus\",\n                   u.password,\n                   u.failed_login_attempts,\n                   u.locked_until,\n                   u.created_at,\n                   u.updated_at,\n                   u.deleted_at,\n                   p.display_name,\n                   p.avatar_url,\n                   p.locale,\n                   p.timezone\n              FROM auth.users u\n              JOIN auth.user_profiles p ON p.id_user = u.id\n             WHERE u.email = $1\n             LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "email_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "phone",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "phone_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "status: UserStatus",
+        "type_info": {
+          "Custom": {
+            "name": "auth.user_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "active",
+                "suspended",
+                "deleted"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "password",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "failed_login_attempts",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 9,
+        "name": "locked_until",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "avatar_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "locale",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 16,
+        "name": "timezone",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "854865c766f1a8788bcdb7ce5c1cf7c8187a14e5a184773a1ee434f6d5313284"
+}

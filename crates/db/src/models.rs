@@ -1,8 +1,7 @@
 //! Database models and parameter types for the auth schema.
 
-use auth_core::JwtSubject;
+use auth_core::{JwtSubject, ToProtoUuid};
 use auth_proto::auth::UserRole as ProtoUserRole;
-use auth_proto::core::Uuid as ProtoUuid;
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
@@ -11,9 +10,10 @@ use sqlx::FromRow;
 use tonic::Status;
 use uuid::Uuid;
 
-/// User role enum matching PostgreSQL enum.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+/// User status enum matching `PostgreSQL` `auth.user_status`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "user_status", rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum UserStatus {
     Pending,
     #[default]
@@ -22,20 +22,29 @@ pub enum UserStatus {
     Deleted,
 }
 
-impl std::fmt::Display for UserStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl UserStatus {
+    /// Returns the string representation as stored in the database.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::Pending => "pending",
             Self::Active => "active",
             Self::Suspended => "suspended",
             Self::Deleted => "deleted",
-        })
+        }
     }
 }
 
-/// OAuth provider enum matching PostgreSQL `auth.oauth_provider`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+impl std::fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// OAuth provider enum matching `PostgreSQL` `auth.oauth_provider`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "oauth_provider", rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum OAuthProvider {
     Google,
     GitHub,
@@ -44,15 +53,23 @@ pub enum OAuthProvider {
     Facebook,
 }
 
-impl std::fmt::Display for OAuthProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl OAuthProvider {
+    /// Returns the string representation as stored in the database.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::Google => "google",
             Self::GitHub => "github",
             Self::Microsoft => "microsoft",
             Self::Apple => "apple",
             Self::Facebook => "facebook",
-        })
+        }
+    }
+}
+
+impl std::fmt::Display for OAuthProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -66,7 +83,7 @@ impl std::str::FromStr for OAuthProvider {
             "microsoft" => Ok(Self::Microsoft),
             "apple" => Ok(Self::Apple),
             "facebook" => Ok(Self::Facebook),
-            _ => Err(format!("Unknown OAuth provider: {s}")),
+            other => Err(format!("Unknown OAuth provider: {other}")),
         }
     }
 }
@@ -75,7 +92,7 @@ impl std::str::FromStr for OAuthProvider {
 // Role helpers (role is now a TEXT FK, not enum)
 // =============================================================================
 
-/// Well-known role names.
+/// Well-known role names as compile-time constants.
 pub mod roles {
     pub const ADMIN: &str = "admin";
     pub const USER: &str = "user";
@@ -83,19 +100,45 @@ pub mod roles {
 }
 
 /// Convert role string to proto enum for backwards compatibility.
-pub fn role_to_proto(role: &str) -> i32 {
-    match role {
-        roles::ADMIN => ProtoUserRole::Administrator as i32,
-        _ => ProtoUserRole::User as i32,
+#[must_use]
+pub const fn role_to_proto(role: &str) -> i32 {
+    match role.as_bytes() {
+        b"admin" => ProtoUserRole::Admin as i32,
+        b"user" => ProtoUserRole::User as i32,
+        _ => ProtoUserRole::Guest as i32,
     }
 }
 
 /// Convert proto enum to role string.
-pub fn proto_to_role(proto: i32) -> Result<&'static str, Status> {
+///
+/// # Errors
+/// Returns an error string if the proto value is invalid.
+pub const fn proto_to_role(proto: i32) -> Result<&'static str, &'static str> {
     match proto {
-        0 => Ok(roles::ADMIN),
-        1 => Ok(roles::USER),
-        _ => Err(Status::invalid_argument(format!("Invalid role: {proto}"))),
+        1 => Ok(roles::ADMIN),
+        2 => Ok(roles::USER),
+        3 => Ok(roles::GUEST),
+        _ => Err("Invalid role"),
+    }
+}
+
+/// Convert proto enum to role string, returning a tonic `Status` on error.
+///
+/// # Errors
+/// Returns `Status::invalid_argument` if the proto value is invalid.
+pub fn proto_to_role_or_status(proto: i32) -> Result<&'static str, Status> {
+    proto_to_role(proto).map_err(|_| Status::invalid_argument(format!("Invalid role: {proto}")))
+}
+
+/// Convert `UserStatus` to proto enum value.
+#[must_use]
+pub const fn status_to_proto(status: UserStatus) -> i32 {
+    use auth_proto::auth::UserStatus as ProtoUserStatus;
+    match status {
+        UserStatus::Pending => ProtoUserStatus::Pending as i32,
+        UserStatus::Active => ProtoUserStatus::Active as i32,
+        UserStatus::Suspended => ProtoUserStatus::Suspended as i32,
+        UserStatus::Deleted => ProtoUserStatus::Deleted as i32,
     }
 }
 
@@ -170,7 +213,7 @@ pub struct UserWithProfile {
     pub timezone: String,
 }
 
-/// Implement JwtSubject for UserWithProfile to enable JWT generation.
+/// Implements [`JwtSubject`] for `UserWithProfile` to enable JWT generation.
 impl JwtSubject for UserWithProfile {
     fn user_id(&self) -> Uuid {
         self.id
@@ -185,11 +228,8 @@ impl JwtSubject for UserWithProfile {
     }
 
     fn role(&self) -> &str {
-        // Convert DB role name to JWT role name expected by UserRole::FromStr
-        match self.role.as_str() {
-            roles::ADMIN => "administrator",
-            _ => "user",
-        }
+        // JWT UserRole::FromStr accepts both "admin" and "administrator"
+        &self.role
     }
 }
 
@@ -272,15 +312,21 @@ pub struct UserInfo {
     pub deleted: bool,
 }
 
-/// Convert Uuid to ProtoUuid.
-pub trait ToProtoUuid {
-    fn to_proto(&self) -> ProtoUuid;
-}
-
-impl ToProtoUuid for Uuid {
-    fn to_proto(&self) -> ProtoUuid {
-        ProtoUuid {
-            value: self.to_string(),
+impl From<&UserInfo> for auth_proto::auth::UserInfo {
+    fn from(u: &UserInfo) -> Self {
+        Self {
+            id: Some(u.id.to_proto()),
+            name: u.display_name.clone(),
+            email: u.email.clone().unwrap_or_default(),
+            role: role_to_proto(&u.role),
+            deleted: u.deleted,
+            // Fields not available from UserInfo (minimal query)
+            phone: String::new(),
+            email_verified: false,
+            phone_verified: false,
+            mfa_enabled: false,
+            status: 0,
+            linked_providers: Vec::new(),
         }
     }
 }
@@ -293,6 +339,30 @@ impl From<UserInfo> for auth_proto::auth::UserInfo {
             email: u.email.unwrap_or_default(),
             role: role_to_proto(&u.role),
             deleted: u.deleted,
+            // Fields not available from UserInfo (minimal query)
+            phone: String::new(),
+            email_verified: false,
+            phone_verified: false,
+            mfa_enabled: false,
+            status: 0,
+            linked_providers: Vec::new(),
+        }
+    }
+}
+
+impl From<&UserInfo> for auth_proto::auth::User {
+    fn from(u: &UserInfo) -> Self {
+        Self {
+            id: Some(u.id.to_proto()),
+            name: u.display_name.clone(),
+            email: u.email.clone().unwrap_or_default(),
+            role: role_to_proto(&u.role),
+            deleted: u.deleted,
+            // Fields not available from UserInfo (minimal query)
+            phone: String::new(),
+            status: String::new(),
+            created_at: 0,
+            updated_at: 0,
         }
     }
 }
@@ -305,6 +375,11 @@ impl From<UserInfo> for auth_proto::auth::User {
             email: u.email.unwrap_or_default(),
             role: role_to_proto(&u.role),
             deleted: u.deleted,
+            // Fields not available from UserInfo (minimal query)
+            phone: String::new(),
+            status: String::new(),
+            created_at: 0,
+            updated_at: 0,
         }
     }
 }
@@ -314,85 +389,76 @@ impl From<UserInfo> for auth_proto::auth::User {
 // =============================================================================
 
 /// Parameters for creating a user with profile (uses DB function).
-#[derive(Debug, Clone)]
-pub struct CreateUserWithProfileParams {
-    pub email: String,
-    pub password_hash: Option<String>,
-    pub role: String,
-    pub display_name: Option<String>,
-    pub locale: String,
-    pub timezone: String,
-}
-
-impl Default for CreateUserWithProfileParams {
-    fn default() -> Self {
-        Self {
-            email: String::new(),
-            password_hash: None,
-            role: roles::USER.to_string(),
-            display_name: None,
-            locale: "en".to_string(),
-            timezone: "UTC".to_string(),
-        }
-    }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CreateUserWithProfileParams<'a> {
+    pub email: Option<&'a str>,
+    pub phone: Option<&'a str>,
+    pub password_hash: Option<&'a str>,
+    /// Defaults to `roles::USER` if empty.
+    pub role: &'a str,
+    pub display_name: Option<&'a str>,
+    /// Defaults to `"en"` if empty.
+    pub locale: &'a str,
+    /// Defaults to `"UTC"` if empty.
+    pub timezone: &'a str,
 }
 
 /// Parameters for updating a user.
-#[derive(Debug, Clone)]
-pub struct UpdateUserParams {
+#[derive(Debug, Clone, Copy)]
+pub struct UpdateUserParams<'a> {
     pub id: Uuid,
-    pub role: String,
-    pub email: Option<String>,
+    pub role: &'a str,
+    pub email: Option<&'a str>,
     pub email_verified: bool,
-    pub phone: Option<String>,
+    pub phone: Option<&'a str>,
     pub phone_verified: bool,
     pub status: UserStatus,
 }
 
 /// Parameters for updating user profile.
-#[derive(Debug, Clone)]
-pub struct UpdateUserProfileParams {
+#[derive(Debug, Clone, Copy)]
+pub struct UpdateUserProfileParams<'a> {
     pub id_user: Uuid,
-    pub display_name: String,
-    pub avatar_url: Option<String>,
-    pub locale: String,
-    pub timezone: String,
+    pub display_name: &'a str,
+    pub avatar_url: Option<&'a str>,
+    pub locale: &'a str,
+    pub timezone: &'a str,
 }
 
 /// Parameters for creating a session.
 #[derive(Debug, Clone)]
-pub struct CreateSessionParams {
+pub struct CreateSessionParams<'a> {
     pub id_user: Uuid,
-    pub refresh_token_hash: Vec<u8>, // SHA-256 hash (32 bytes)
+    pub refresh_token_hash: &'a [u8], // SHA-256 hash (32 bytes)
     pub expires_at: DateTime<Utc>,
-    pub device_id: Option<String>,
-    pub device_name: Option<String>,
-    pub device_type: Option<String>,
-    pub client_version: Option<String>,
+    pub device_id: Option<&'a str>,
+    pub device_name: Option<&'a str>,
+    pub device_type: Option<&'a str>,
+    pub client_version: Option<&'a str>,
     pub ip_address: Option<IpNetwork>,
-    pub ip_country: Option<String>,
+    pub ip_country: Option<&'a str>,
     pub metadata: JsonValue, // Contains user_agent, device model, os info, etc.
 }
 
 /// Parameters for linking OAuth provider.
 #[derive(Debug, Clone)]
-pub struct LinkOAuthProviderParams {
+pub struct LinkOAuthProviderParams<'a> {
     pub id_user: Uuid,
     pub provider: OAuthProvider,
-    pub provider_uid: String,
-    pub email: Option<String>,
-    pub name: Option<String>,
-    pub avatar_url: Option<String>,
+    pub provider_uid: &'a str,
+    pub email: Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub avatar_url: Option<&'a str>,
     pub provider_data: JsonValue,
 }
 
 /// Parameters for creating OAuth state.
-#[derive(Debug, Clone)]
-pub struct CreateOAuthStateParams {
-    pub state: String,
-    pub code_verifier: String,
+#[derive(Debug, Clone, Copy)]
+pub struct CreateOAuthStateParams<'a> {
+    pub state: &'a str,
+    pub code_verifier: &'a str,
     pub provider: OAuthProvider,
-    pub redirect_uri: Option<String>,
+    pub redirect_uri: Option<&'a str>,
 }
 
 /// Result from consuming OAuth state.
@@ -428,9 +494,32 @@ pub struct PasswordResetToken {
 }
 
 /// Parameters for creating a password reset token.
-#[derive(Debug, Clone)]
-pub struct CreatePasswordResetTokenParams {
+#[derive(Debug, Clone, Copy)]
+pub struct CreatePasswordResetTokenParams<'a> {
     pub id_user: Uuid,
-    pub token_hash: Vec<u8>,
+    pub token_hash: &'a [u8],
+    pub expires_at: DateTime<Utc>,
+}
+
+// =============================================================================
+// Email Verification Token
+// =============================================================================
+
+/// Email verification token from `auth.email_verification_tokens` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct EmailVerificationToken {
+    pub id: Uuid,
+    pub id_user: Uuid,
+    pub token_hash: Vec<u8>, // SHA-256 hash (32 bytes)
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for creating an email verification token.
+#[derive(Debug, Clone, Copy)]
+pub struct CreateEmailVerificationTokenParams<'a> {
+    pub id_user: Uuid,
+    pub token_hash: &'a [u8],
     pub expires_at: DateTime<Utc>,
 }

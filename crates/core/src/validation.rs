@@ -12,6 +12,9 @@ use tonic::Status;
 /// Extension trait for validating requests and converting errors to Status.
 pub trait ValidateExt {
     /// Validate the request and return Status error on failure.
+    ///
+    /// # Errors
+    /// Returns `Status::invalid_argument` if validation fails.
     fn validate_or_status(&self) -> Result<(), Status>;
 }
 
@@ -36,6 +39,9 @@ pub mod domain {
     pub const MAX_NAME_LENGTH: usize = 255;
 
     /// Validate password strength beyond basic length.
+    ///
+    /// # Errors
+    /// Returns `Status::invalid_argument` if the password is too short or lacks required characters.
     pub fn validate_password(password: &str) -> Result<(), Status> {
         if password.len() < MIN_PASSWORD_LENGTH {
             return Err(Status::invalid_argument(format!(
@@ -43,7 +49,7 @@ pub mod domain {
             )));
         }
 
-        let has_letter = password.chars().any(|c| c.is_alphabetic());
+        let has_letter = password.chars().any(char::is_alphabetic);
         let has_digit = password.chars().any(|c| c.is_ascii_digit());
 
         if !has_letter || !has_digit {
@@ -56,6 +62,9 @@ pub mod domain {
     }
 
     /// Validate email format (basic check beyond proto validation).
+    ///
+    /// # Errors
+    /// Returns `Status::invalid_argument` if the email format is invalid.
     pub fn validate_email(email: &str) -> Result<(), Status> {
         if email.len() > MAX_EMAIL_LENGTH {
             return Err(Status::invalid_argument(format!(
@@ -71,6 +80,9 @@ pub mod domain {
     }
 
     /// Validate user name.
+    ///
+    /// # Errors
+    /// Returns `Status::invalid_argument` if the name is empty or too long.
     pub fn validate_name(name: &str) -> Result<(), Status> {
         let name = name.trim();
 

@@ -4,12 +4,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use auth_core::OptionStrExt;
 use auth_db::{Database, DbConfig, create_pool};
 use auth_email::{EmailConfig, EmailService};
+use auth_mailjet::{MailjetConfig, MailjetService};
 use auth_proto::auth::auth_service_server::AuthServiceServer;
 use auth_storage::{S3Config, S3Storage};
 use axum::Router;
 use http::Request;
+use secrecy::SecretString;
 use tonic::service::Routes;
 use tonic_health::server::health_reporter;
 use tonic_web::GrpcWebLayer;
@@ -20,7 +23,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{Level, info, warn};
 
 use crate::config::Config;
-use crate::core::{GeolocationService, JwtValidator};
+use crate::core::{GeolocationService, JwtValidator, UrlBuilder};
 use crate::middleware::{AuthLayer, RequestIdLayer};
 use crate::routes::rest_routes;
 use crate::services::AuthServiceImpl;
@@ -31,15 +34,120 @@ const GRPC_MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
 /// Request timeout duration.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
+/// Email provider type alias for boxed async error.
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// Wrapper for email providers (SMTP or Mailjet).
+#[derive(Clone)]
+pub enum EmailProvider {
+    /// SMTP with code-based templates.
+    Smtp(Arc<EmailService>),
+    /// Mailjet with platform-hosted templates.
+    Mailjet(Arc<MailjetService>),
+}
+
+impl EmailProvider {
+    /// Send a password reset email using the configured provider.
+    ///
+    /// # Errors
+    /// Returns an error if the email fails to send.
+    pub async fn send_password_reset(
+        &self,
+        to_email: &str,
+        to_name: &str,
+        reset_url: &str,
+        expires_minutes: u32,
+    ) -> Result<(), BoxError> {
+        match self {
+            Self::Smtp(service) => {
+                // SMTP uses code templates with expires_minutes
+                service
+                    .send_password_reset(to_email, to_name, reset_url, expires_minutes)
+                    .await
+                    .map_err(Into::into)
+            }
+            Self::Mailjet(service) => {
+                // Mailjet uses platform templates (expires_minutes in template)
+                service
+                    .send_password_reset(to_email, to_name, reset_url)
+                    .await
+                    .map_err(Into::into)
+            }
+        }
+    }
+
+    /// Send a welcome email to a new user.
+    ///
+    /// # Errors
+    /// Returns an error if the email fails to send.
+    pub async fn send_welcome(
+        &self,
+        to_email: &str,
+        to_name: &str,
+        login_url: &str,
+        temp_password: Option<&str>,
+        verification_url: Option<&str>,
+    ) -> Result<(), BoxError> {
+        match self {
+            Self::Smtp(_service) => {
+                // TODO: Implement SMTP welcome email template
+                Ok(())
+            }
+            Self::Mailjet(service) => service
+                .send_welcome(
+                    to_email,
+                    to_name,
+                    login_url,
+                    temp_password,
+                    verification_url,
+                )
+                .await
+                .map_err(Into::into),
+        }
+    }
+
+    /// Send a password changed confirmation email.
+    ///
+    /// # Errors
+    /// Returns an error if the email fails to send.
+    #[allow(dead_code)]
+    pub async fn send_password_changed(
+        &self,
+        to_email: &str,
+        to_name: &str,
+    ) -> Result<(), BoxError> {
+        match self {
+            Self::Smtp(_service) => {
+                // TODO: Implement SMTP password changed email template
+                Ok(())
+            }
+            Self::Mailjet(service) => service
+                .send_password_changed(to_email, to_name)
+                .await
+                .map_err(Into::into),
+        }
+    }
+}
+
 /// Application state shared across handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub db: Database,
     pub s3: Option<Arc<S3Storage>>,
-    pub email: Option<Arc<EmailService>>,
+    #[allow(dead_code)]
+    pub email: Option<EmailProvider>,
+    /// URL builder for frontend redirects and email links.
+    pub urls: UrlBuilder,
 }
 
 /// Build and configure the complete application.
+///
+/// # Errors
+/// Returns an error if database connection, S3, or server configuration fails.
+///
+/// # Panics
+/// Panics if JWT secret is not configured (validated in `Config::init`).
+#[allow(clippy::similar_names)]
 pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> {
     // Create shared JWT validator once
     let jwt_secret = config
@@ -75,12 +183,25 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
     // Server address
     let addr: SocketAddr = config.grpc_address.parse()?;
 
-    // Build auth service with shared validator and geolocation
+    // Get domain for email links (defaults to "localhost" if not configured)
+    let domain = config.domain.clone().or_str("localhost");
+
+    // Build URL builder for frontend links
+    let urls = UrlBuilder::new(&domain);
+
+    // Build auth service config
+    let auth_config = crate::services::AuthServiceConfig {
+        jwt_validator: jwt_validator.clone(),
+        access_token_ttl_minutes: config.access_token_ttl_minutes,
+        refresh_token_ttl_days: config.refresh_token_ttl_days,
+        password_reset_ttl_minutes: config.password_reset_ttl_minutes,
+        email_verification_ttl_hours: config.email_verification_ttl_hours,
+        urls: urls.clone(),
+    };
+
+    // Build auth service with config and dependencies
     let auth_service = AuthServiceImpl::new(
-        jwt_validator.clone(),
-        config.access_token_ttl_minutes,
-        config.refresh_token_ttl_days,
-        config.password_reset_ttl_minutes,
+        auth_config,
         database.clone(),
         s3_storage.clone(),
         email_service.clone(),
@@ -114,6 +235,7 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
         db: database,
         s3: s3_storage,
         email: email_service,
+        urls: UrlBuilder::new(&domain),
     };
 
     // Build REST routes
@@ -168,35 +290,71 @@ fn init_s3(config: &Config) -> Option<Arc<S3Storage>> {
     }
 }
 
-fn init_email(config: &Config) -> Option<Arc<EmailService>> {
-    match (
-        config.smtp_url_with_password(),
-        &config.smtp_sender,
-        &config.domain,
-    ) {
-        (Some(smtp_url), Some(sender), Some(domain)) => {
-            match EmailConfig::from_url(&smtp_url, sender, domain) {
-                Ok(email_config) => match EmailService::new(email_config) {
-                    Ok(service) => {
-                        info!("Email service initialized");
-                        Some(Arc::new(service))
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to initialize email service");
-                        None
-                    }
-                },
-                Err(e) => {
-                    warn!(error = %e, "Invalid SMTP configuration");
-                    None
-                }
+fn init_email(config: &Config) -> Option<EmailProvider> {
+    let domain = config.domain.as_ref()?;
+
+    // Check provider preference
+    let provider = config.email_provider.to_lowercase();
+
+    if provider == "mailjet" {
+        return init_mailjet(config);
+    }
+
+    // Default to SMTP, fallback to Mailjet if SMTP not configured
+    if config.smtp_enabled() {
+        init_smtp(config, domain)
+    } else if config.mailjet_enabled() {
+        info!("SMTP not configured, falling back to Mailjet");
+        init_mailjet(config)
+    } else {
+        info!("Email not configured (SMTP_URL/SMTP_SENDER or MAILJET_* required)");
+        None
+    }
+}
+
+fn init_smtp(config: &Config, domain: &str) -> Option<EmailProvider> {
+    let smtp_url = config.smtp_url_with_password()?;
+    let sender = config.email_sender.as_ref()?;
+
+    match EmailConfig::from_url(&smtp_url, sender, domain) {
+        Ok(email_config) => match EmailService::new(email_config) {
+            Ok(service) => {
+                info!("Email service initialized (SMTP with code templates)");
+                Some(EmailProvider::Smtp(Arc::new(service)))
             }
-        }
-        _ => {
-            info!("Email not configured (SMTP_URL, SMTP_SENDER, and DOMAIN required)");
+            Err(e) => {
+                warn!(error = %e, "Failed to initialize SMTP email service");
+                None
+            }
+        },
+        Err(e) => {
+            warn!(error = %e, "Invalid SMTP configuration");
             None
         }
     }
+}
+
+fn init_mailjet(config: &Config) -> Option<EmailProvider> {
+    let api_key = config.mailjet_api_key.as_ref()?;
+    let api_secret = config.mailjet_api_secret()?;
+    let (sender_name, sender_email) = config.parse_email_sender()?;
+    let password_reset_template_id = config.mailjet_password_reset_template_id?;
+    let welcome_template_id = config.mailjet_welcome_template_id.unwrap_or(0);
+    let password_changed_template_id = config.mailjet_password_changed_template_id.unwrap_or(0);
+
+    let mailjet_config = MailjetConfig {
+        api_key: api_key.clone(),
+        api_secret: SecretString::from(api_secret),
+        sender_name,
+        sender_email,
+        password_reset_template_id,
+        welcome_template_id,
+        password_changed_template_id,
+    };
+
+    let service = MailjetService::new(mailjet_config);
+    info!("Email service initialized (Mailjet with platform templates)");
+    Some(EmailProvider::Mailjet(Arc::new(service)))
 }
 
 fn build_cors(origins: Option<&str>) -> CorsLayer {

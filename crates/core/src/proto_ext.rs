@@ -7,6 +7,10 @@ use prost_types::value::Kind;
 use tonic::Status;
 use uuid::Uuid;
 
+// =============================================================================
+// Proto UUID
+// =============================================================================
+
 /// Generic protobuf UUID wrapper.
 ///
 /// This trait abstracts over different proto UUID types that share the same structure.
@@ -112,8 +116,7 @@ fn proto_value_to_json(v: &prost_types::Value) -> serde_json::Value {
         Some(Kind::NullValue(_)) | None => serde_json::Value::Null,
         Some(Kind::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(Kind::NumberValue(n)) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         Some(Kind::StringValue(s)) => serde_json::Value::String(s.clone()),
         Some(Kind::ListValue(list)) => {
             serde_json::Value::Array(list.values.iter().map(proto_value_to_json).collect())

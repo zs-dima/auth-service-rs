@@ -77,16 +77,19 @@ impl TelemetryGuard {
     /// Shutdown telemetry providers gracefully.
     pub fn shutdown(self) {
         #[cfg(feature = "otlp")]
-        if let Some(provider) = self.otel_provider {
-            if let Err(e) = provider.shutdown() {
-                eprintln!("Failed to shutdown OpenTelemetry provider: {e}");
-            }
+        if let Some(provider) = self.otel_provider
+            && let Err(e) = provider.shutdown()
+        {
+            eprintln!("Failed to shutdown OpenTelemetry provider: {e}");
         }
         // Sentry guard is dropped automatically
     }
 }
 
 /// Initialize Prometheus metrics exporter and return the handle for the /metrics endpoint.
+///
+/// # Panics
+/// Panics if the Prometheus recorder fails to install.
 #[cfg(feature = "prometheus")]
 #[must_use]
 pub fn init_metrics() -> PrometheusHandle {
@@ -158,17 +161,20 @@ fn init_sentry(config: &TelemetryConfig) -> Option<sentry::ClientInitGuard> {
 /// Setup complete logging/tracing stack.
 ///
 /// - Console logging (JSON or human-readable)
-/// - OpenTelemetry tracing (if OTLP endpoint configured)
+/// - `OpenTelemetry` tracing (if OTLP endpoint configured)
 /// - Sentry error tracking (if DSN configured)
 ///
 /// Returns a guard that should be kept alive for the application lifetime.
 /// Call `shutdown()` on the guard for graceful shutdown.
+///
+/// # Panics
+/// Panics if the tracing subscriber cannot be initialized.
 #[must_use]
+#[allow(clippy::match_same_arms)]
 pub fn setup_telemetry(config: &TelemetryConfig) -> TelemetryGuard {
     let level = match config.log_level.to_uppercase().as_str() {
         "TRACE" => Level::TRACE,
         "DEBUG" => Level::DEBUG,
-        "INFO" => Level::INFO,
         "WARN" => Level::WARN,
         "ERROR" => Level::ERROR,
         _ => Level::INFO,
@@ -180,7 +186,8 @@ pub fn setup_telemetry(config: &TelemetryConfig) -> TelemetryGuard {
         .add_directive("tower=info".parse().unwrap())
         .add_directive("h2=info".parse().unwrap())
         .add_directive("hyper=info".parse().unwrap())
-        .add_directive("sentry=warn".parse().unwrap());
+        .add_directive("sentry=warn".parse().unwrap())
+        .add_directive("maxminddb=info".parse().unwrap());
 
     // Initialize Sentry first (before tracing subscriber)
     #[cfg(feature = "sentry")]

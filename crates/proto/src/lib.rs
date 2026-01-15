@@ -9,13 +9,13 @@ use auth_core::impl_proto_uuid;
 // Re-export prost_types for use with google.protobuf.Struct and other well-known types
 pub use prost_types;
 
-#[allow(clippy::all, dead_code)]
+#[allow(clippy::all, clippy::pedantic, dead_code)]
 #[cfg_attr(doc, allow(unconditional_recursion))]
 pub mod auth {
     tonic::include_proto!("auth");
 }
 
-#[allow(clippy::all, dead_code)]
+#[allow(clippy::all, clippy::pedantic, dead_code)]
 #[cfg_attr(doc, allow(unconditional_recursion))]
 pub mod core {
     tonic::include_proto!("core");

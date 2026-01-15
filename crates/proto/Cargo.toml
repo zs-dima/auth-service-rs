@@ -1,8 +1,8 @@
 [package]
 name = "auth-proto"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
 description = "Generated protobuf code for auth service"
 
 [dependencies]
@@ -22,8 +22,5 @@ tonic-prost-build = "0.14"
 prost-build = "0.14"
 prost-validate-build = "0.2"
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = "warn"
+[lints]
+workspace = true

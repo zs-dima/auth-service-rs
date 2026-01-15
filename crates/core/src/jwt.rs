@@ -12,6 +12,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tonic::Status;
 use tracing::warn;
 use uuid::Uuid;
@@ -48,6 +49,7 @@ pub trait JwtSubject {
 pub enum UserRole {
     Administrator,
     User,
+    Guest,
 }
 
 impl std::fmt::Display for UserRole {
@@ -55,6 +57,7 @@ impl std::fmt::Display for UserRole {
         f.write_str(match self {
             Self::Administrator => "administrator",
             Self::User => "user",
+            Self::Guest => "guest",
         })
     }
 }
@@ -64,8 +67,9 @@ impl std::str::FromStr for UserRole {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "administrator" => Ok(Self::Administrator),
+            "administrator" | "admin" => Ok(Self::Administrator),
             "user" => Ok(Self::User),
+            "guest" => Ok(Self::Guest),
             _ => Err(format!("Unknown role: {s}")),
         }
     }
@@ -101,6 +105,9 @@ impl AuthInfo {
     }
 
     /// Require access to target user, returning Status error if denied.
+    ///
+    /// # Errors
+    /// Returns `Status::permission_denied` if the user cannot access the target.
     pub fn require_access(&self, target: Uuid, action: &str) -> Result<(), Status> {
         if self.can_access(target) {
             Ok(())
@@ -163,10 +170,7 @@ impl TryFrom<Claims> for AuthInfo {
     fn try_from(claims: Claims) -> Result<Self, Self::Error> {
         Ok(Self {
             user_id: Uuid::parse_str(&claims.sub).map_err(|_| JwtError::InvalidClaim("sub"))?,
-            device_id: claims
-                .device_id
-                .parse()
-                .map_err(|_| JwtError::InvalidClaim("device_id"))?,
+            device_id: claims.device_id,
             installation_id: Uuid::parse_str(&claims.installation_id)
                 .map_err(|_| JwtError::InvalidClaim("installation_id"))?,
             role: claims
@@ -209,7 +213,14 @@ impl JwtValidator {
         }
     }
 
+    /// Maximum TTL in minutes (approximately 1 year) to prevent overflow.
+    const MAX_TTL_MINUTES: u64 = 525_600;
+
     /// Generate an access token for any type implementing `JwtSubject`.
+    ///
+    /// # Errors
+    /// Returns `AppError::Internal` if JWT encoding fails.
+    /// Returns `AppError::InvalidArgument` if TTL exceeds maximum.
     pub fn generate_access_token<T: JwtSubject>(
         &self,
         subject: &T,
@@ -217,7 +228,14 @@ impl JwtValidator {
         installation_id: &Uuid,
         ttl_minutes: u64,
     ) -> Result<String, AppError> {
+        if ttl_minutes > Self::MAX_TTL_MINUTES {
+            return Err(AppError::InvalidArgument(format!(
+                "TTL exceeds maximum of {} minutes",
+                Self::MAX_TTL_MINUTES
+            )));
+        }
         let now = Utc::now();
+        // Safe cast: ttl_minutes is bounded by MAX_TTL_MINUTES which fits in i64
         let expiration = now + Duration::minutes(ttl_minutes as i64);
 
         let claims = Claims {
@@ -243,6 +261,9 @@ impl JwtValidator {
     }
 
     /// Validate a JWT and extract auth info.
+    ///
+    /// # Errors
+    /// Returns `JwtError::InvalidToken` if the token is invalid or expired.
     pub fn validate(&self, token: &str) -> Result<AuthInfo, JwtError> {
         let token_data = decode::<Claims>(token, &self.decoding_key, &self.validation)
             .map_err(|_| JwtError::InvalidToken)?;
@@ -250,6 +271,9 @@ impl JwtValidator {
         token_data.claims.try_into()
     }
 }
+
+/// SHA-256 token hash type (32 bytes).
+type TokenHash = [u8; 32];
 
 /// Refresh token generator.
 pub struct TokenGenerator;
@@ -261,7 +285,10 @@ impl TokenGenerator {
     /// * `ttl_days` - Token time-to-live in days
     ///
     /// # Returns
-    /// Tuple of (token, expiration_time)
+    /// Tuple of `(token, expiration_time)`.
+    ///
+    /// # Errors
+    /// This function is infallible but returns `Result` for API consistency.
     pub fn generate_refresh_token(
         ttl_days: i64,
     ) -> Result<(String, chrono::DateTime<Utc>), AppError> {
@@ -286,13 +313,22 @@ impl TokenGenerator {
         rand::rng().fill_bytes(&mut bytes);
         base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
     }
+
+    /// Hash a token using SHA-256 for secure storage.
+    ///
+    /// Used to hash verification and reset tokens before storing in the database.
+    /// The same hash function must be used for both storage and verification.
+    #[must_use]
+    pub fn hash_token(token: &str) -> TokenHash {
+        Sha256::digest(token.as_bytes()).into()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Test implementation of JwtSubject for unit tests.
+    /// Test implementation of `JwtSubject` for unit tests.
     struct TestUser {
         id: Uuid,
         email: String,
@@ -336,7 +372,7 @@ mod tests {
         let validator = JwtValidator::new(&test_secret());
 
         let token = validator
-            .generate_access_token(&user, &device_id, &installation_id, 15)
+            .generate_access_token(&user, device_id, &installation_id, 15)
             .unwrap();
 
         let auth_info = validator.validate(&token).unwrap();
@@ -364,7 +400,7 @@ mod tests {
         let validator = JwtValidator::new(&test_secret());
 
         let token = validator
-            .generate_access_token(&user, &device_id, &installation_id, 15)
+            .generate_access_token(&user, device_id, &installation_id, 15)
             .unwrap();
 
         let auth_info = validator.validate(&token).unwrap();
@@ -415,9 +451,18 @@ mod tests {
             "administrator".parse::<UserRole>().unwrap(),
             UserRole::Administrator
         );
+        assert_eq!(
+            "admin".parse::<UserRole>().unwrap(),
+            UserRole::Administrator
+        );
         assert_eq!("user".parse::<UserRole>().unwrap(), UserRole::User);
+        assert_eq!("guest".parse::<UserRole>().unwrap(), UserRole::Guest);
         assert_eq!(
             "ADMINISTRATOR".parse::<UserRole>().unwrap(),
+            UserRole::Administrator
+        );
+        assert_eq!(
+            "ADMIN".parse::<UserRole>().unwrap(),
             UserRole::Administrator
         );
         assert!("invalid".parse::<UserRole>().is_err());

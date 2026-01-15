@@ -12,6 +12,9 @@ pub struct PasswordResetEmail<'a> {
 
 impl PasswordResetEmail<'_> {
     /// Render HTML version of the email.
+    ///
+    /// # Errors
+    /// This function is infallible but returns `Result` for API consistency.
     pub fn render_html(&self) -> Result<String, EmailError> {
         Ok(format!(
             r#"<!DOCTYPE html>
@@ -112,9 +115,13 @@ impl PasswordResetEmail<'_> {
     }
 
     /// Render plain text version of the email.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EmailError::TemplateRender` if template rendering fails.
     pub fn render_text(&self) -> Result<String, EmailError> {
         Ok(format!(
-            r#"Reset your password
+            r"Reset your password
 
 Hi {user_name},
 
@@ -129,7 +136,7 @@ If you didn't request a password reset, you can safely ignore this email. Your p
 
 ---
 This email was sent by {domain}
-For security reasons, please don't forward this email to anyone."#,
+For security reasons, please don't forward this email to anyone.",
             user_name = self.user_name,
             reset_link = self.reset_link,
             expires_minutes = self.expires_minutes,

@@ -1,27 +1,99 @@
 //! Database repository layer with connection pooling for the auth schema.
+//!
+//! # Error Handling
+//!
+//! All repository methods return `Result<T, AppError>` where errors are:
+//! - `AppError::Unavailable` - Database connection or query failures
+//! - `AppError::NotFound` - Requested entity does not exist
+//! - `AppError::AlreadyExists` - Entity already exists (for creation methods)
+//! - `AppError::InvalidArgument` - Invalid input parameters
+
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "error handling documented at module level"
+)]
 
 use std::time::Duration;
 
 use auth_core::AppError;
 use ipnetwork::IpNetwork;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use tracing::info;
 use uuid::Uuid;
 
+/// Database error wrapper for ergonomic error conversion.
+///
+/// Wraps `sqlx::Error` to enable automatic conversion to `AppError`
+/// via the `?` operator throughout repository methods.
+#[derive(Debug)]
+struct DbError(sqlx::Error);
+
+impl From<sqlx::Error> for DbError {
+    #[inline]
+    fn from(e: sqlx::Error) -> Self {
+        Self(e)
+    }
+}
+
+impl From<DbError> for AppError {
+    #[inline]
+    fn from(e: DbError) -> Self {
+        Self::Unavailable(e.0.to_string())
+    }
+}
+
 use super::models::{
-    ConsumedOAuthState, CreateOAuthStateParams, CreatePasswordResetTokenParams,
-    CreateSessionParams, CreateUserWithProfileParams, LinkOAuthProviderParams, OAuthProvider,
-    SessionInfo, TouchSessionResult, UpdateUserParams, UpdateUserProfileParams, User, UserInfo,
-    UserStatus, UserWithProfile,
+    ConsumedOAuthState, CreateEmailVerificationTokenParams, CreateOAuthStateParams,
+    CreatePasswordResetTokenParams, CreateSessionParams, CreateUserWithProfileParams,
+    LinkOAuthProviderParams, OAuthProvider, SessionInfo, TouchSessionResult, UpdateUserParams,
+    UpdateUserProfileParams, User, UserInfo, UserStatus, UserWithProfile,
 };
 
 /// Database configuration.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct DbConfig {
     pub url: String,
     pub pool_min: u32,
     pub pool_max: u32,
     pub connect_timeout: Duration,
+}
+
+impl DbConfig {
+    /// Default minimum pool connections.
+    pub const DEFAULT_POOL_MIN: u32 = 1;
+    /// Default maximum pool connections.
+    pub const DEFAULT_POOL_MAX: u32 = 10;
+    /// Default connection timeout.
+    pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Creates a new database configuration.
+    pub const fn new(url: String, pool_min: u32, pool_max: u32, connect_timeout: Duration) -> Self {
+        Self {
+            url,
+            pool_min,
+            pool_max,
+            connect_timeout,
+        }
+    }
+
+    /// Creates a configuration from a URL with default pool settings.
+    pub fn from_url(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            pool_min: Self::DEFAULT_POOL_MIN,
+            pool_max: Self::DEFAULT_POOL_MAX,
+            connect_timeout: Self::DEFAULT_CONNECT_TIMEOUT,
+        }
+    }
 }
 
 /// Create database connection pool.
@@ -42,6 +114,7 @@ pub struct UserRepository {
 }
 
 impl UserRepository {
+    #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -79,8 +152,115 @@ impl UserRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound(format!("User not found: {email}")))
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::not_found("User", email))
+    }
+
+    /// Get active user with profile by phone (E.164 format).
+    pub async fn get_active_user_by_phone(&self, phone: &str) -> Result<UserWithProfile, AppError> {
+        sqlx::query_as!(
+            UserWithProfile,
+            r#"
+            SELECT u.id,
+                   u.role,
+                   u.email,
+                   u.email_verified,
+                   u.phone,
+                   u.phone_verified,
+                   u.status AS "status: UserStatus",
+                   u.password,
+                   u.failed_login_attempts,
+                   u.locked_until,
+                   u.created_at,
+                   u.updated_at,
+                   u.deleted_at,
+                   p.display_name,
+                   p.avatar_url,
+                   p.locale,
+                   p.timezone
+              FROM auth.users u
+              JOIN auth.user_profiles p ON p.id_user = u.id
+             WHERE u.phone = $1
+               AND u.status = 'active'
+               AND u.deleted_at IS NULL
+             LIMIT 1
+            "#,
+            phone
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::not_found("User by phone", phone))
+    }
+
+    /// Get user by email (any status, for existence checks).
+    pub async fn get_user_by_email(&self, email: &str) -> Result<UserWithProfile, AppError> {
+        sqlx::query_as!(
+            UserWithProfile,
+            r#"
+            SELECT u.id,
+                   u.role,
+                   u.email,
+                   u.email_verified,
+                   u.phone,
+                   u.phone_verified,
+                   u.status AS "status: UserStatus",
+                   u.password,
+                   u.failed_login_attempts,
+                   u.locked_until,
+                   u.created_at,
+                   u.updated_at,
+                   u.deleted_at,
+                   p.display_name,
+                   p.avatar_url,
+                   p.locale,
+                   p.timezone
+              FROM auth.users u
+              JOIN auth.user_profiles p ON p.id_user = u.id
+             WHERE u.email = $1
+             LIMIT 1
+            "#,
+            email
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::not_found("User", email))
+    }
+
+    /// Get user by phone (any status, for existence checks).
+    pub async fn get_user_by_phone(&self, phone: &str) -> Result<UserWithProfile, AppError> {
+        sqlx::query_as!(
+            UserWithProfile,
+            r#"
+            SELECT u.id,
+                   u.role,
+                   u.email,
+                   u.email_verified,
+                   u.phone,
+                   u.phone_verified,
+                   u.status AS "status: UserStatus",
+                   u.password,
+                   u.failed_login_attempts,
+                   u.locked_until,
+                   u.created_at,
+                   u.updated_at,
+                   u.deleted_at,
+                   p.display_name,
+                   p.avatar_url,
+                   p.locale,
+                   p.timezone
+              FROM auth.users u
+              JOIN auth.user_profiles p ON p.id_user = u.id
+             WHERE u.phone = $1
+             LIMIT 1
+            "#,
+            phone
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::not_found("User by phone", phone))
     }
 
     /// Get user with profile by ID.
@@ -114,8 +294,8 @@ impl UserRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound(format!("User not found: {user_id}")))
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::not_found("User", user_id))
     }
 
     /// Get raw user by ID (without profile).
@@ -144,20 +324,35 @@ impl UserRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound(format!("User not found: {user_id}")))
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::not_found("User", user_id))
     }
 
-    /// Create a new user with profile using the database function.
+    /// Create a new user with profile.
+    /// Supports email-based or phone-based registration.
+    ///
+    /// # Errors
+    /// Returns `AppError::InvalidArgument` if neither email nor phone is provided.
+    /// Returns `AppError::AlreadyExists` if the user already exists.
     pub async fn create_user_with_profile(
         &self,
-        params: CreateUserWithProfileParams,
+        params: CreateUserWithProfileParams<'_>,
     ) -> Result<Uuid, AppError> {
+        // Fail fast if neither identifier is provided
+        if params.email.is_none() && params.phone.is_none() {
+            return Err(AppError::InvalidArgument(
+                "Either email or phone must be provided".to_string(),
+            ));
+        }
+
+        let identifier = params.email.or(params.phone).unwrap_or("unknown");
+
         sqlx::query_scalar!(
             r#"
-            SELECT auth.create_user_with_profile($1, $2, $3::TEXT::auth.role_name, $4, $5, $6) AS "id!"
+            SELECT auth.create_user_with_profile($1, $2, $3, $4::TEXT::auth.role_name, $5, $6, $7) AS "id!"
             "#,
             params.email,
+            params.phone,
             params.password_hash,
             params.role,
             params.display_name,
@@ -167,18 +362,17 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| {
-            if e.to_string().contains("unique_violation")
-                || e.to_string().contains("duplicate key")
-            {
-                AppError::AlreadyExists(format!("User already exists: {}", params.email))
+            let msg = e.to_string();
+            if msg.contains("unique_violation") || msg.contains("duplicate key") {
+                AppError::AlreadyExists(format!("User already exists: {identifier}"))
             } else {
-                AppError::Unavailable(e.to_string())
+                AppError::Unavailable(msg)
             }
         })
     }
 
     /// Update an existing user.
-    pub async fn update_user(&self, params: UpdateUserParams) -> Result<(), AppError> {
+    pub async fn update_user(&self, params: UpdateUserParams<'_>) -> Result<(), AppError> {
         sqlx::query!(
             r#"
             UPDATE auth.users
@@ -200,14 +394,14 @@ impl UserRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
         Ok(())
     }
 
     /// Update user profile.
     pub async fn update_user_profile(
         &self,
-        params: UpdateUserProfileParams,
+        params: UpdateUserProfileParams<'_>,
     ) -> Result<(), AppError> {
         sqlx::query!(
             r#"
@@ -226,34 +420,63 @@ impl UserRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
         Ok(())
     }
 
     /// Update user password.
+    ///
+    /// # Errors
+    /// Returns `AppError::NotFound` if the user doesn't exist or is deleted.
     pub async fn update_user_password(
         &self,
-        email: &str,
+        user_id: Uuid,
         password_hash: &str,
     ) -> Result<(), AppError> {
         let result = sqlx::query!(
             r#"
             UPDATE auth.users
                SET password = $2
-             WHERE email = $1
+             WHERE id = $1
                AND deleted_at IS NULL
             "#,
-            email,
+            user_id,
             password_hash
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
 
-        if result.rows_affected() == 0 {
-            return Err(AppError::NotFound(format!("User not found: {email}")));
+        if result.rows_affected() > 0 {
+            Ok(())
+        } else {
+            Err(AppError::not_found("User", user_id))
         }
-        Ok(())
+    }
+
+    /// Set email_verified to true for a user.
+    ///
+    /// # Errors
+    /// Returns `AppError::NotFound` if the user doesn't exist or is deleted.
+    pub async fn set_email_verified(&self, user_id: Uuid) -> Result<(), AppError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE auth.users
+               SET email_verified = TRUE
+             WHERE id = $1
+               AND deleted_at IS NULL
+            "#,
+            user_id
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(DbError)?;
+
+        if result.rows_affected() > 0 {
+            Ok(())
+        } else {
+            Err(AppError::not_found("User", user_id))
+        }
     }
 
     /// Increment failed login attempts.
@@ -269,7 +492,7 @@ impl UserRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))
+        .map_err(|e| DbError(e).into())
     }
 
     /// Reset failed login attempts.
@@ -285,12 +508,11 @@ impl UserRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
         Ok(())
     }
 
-    /// Soft delete a user.
-    #[allow(dead_code)]
+    /// Soft delete a user by setting `deleted_at` and status to `deleted`.
     pub async fn delete_user(&self, user_id: Uuid) -> Result<(), AppError> {
         sqlx::query!(
             r#"
@@ -303,7 +525,7 @@ impl UserRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
         Ok(())
     }
 
@@ -333,7 +555,7 @@ impl UserRepository {
         user_ids: Vec<Uuid>,
     ) -> impl tokio_stream::Stream<Item = Result<UserInfo, sqlx::Error>> + '_ {
         sqlx::query_as::<_, UserInfo>(
-            r#"
+            r"
             SELECT u.id,
                    u.role,
                    u.email,
@@ -343,7 +565,7 @@ impl UserRepository {
               JOIN auth.user_profiles p ON p.id_user = u.id
              WHERE u.id = ANY($1)
              ORDER BY p.display_name
-            "#,
+            ",
         )
         .bind(user_ids)
         .fetch(&self.pool)
@@ -352,7 +574,7 @@ impl UserRepository {
     /// Link OAuth provider to user.
     pub async fn link_oauth_provider(
         &self,
-        params: LinkOAuthProviderParams,
+        params: LinkOAuthProviderParams<'_>,
     ) -> Result<Uuid, AppError> {
         sqlx::query_scalar!(
             r#"
@@ -368,7 +590,7 @@ impl UserRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))
+        .map_err(|e| DbError(e).into())
     }
 }
 
@@ -379,12 +601,13 @@ pub struct SessionRepository {
 }
 
 impl SessionRepository {
+    #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     /// Create a new session.
-    pub async fn create_session(&self, params: CreateSessionParams) -> Result<(), AppError> {
+    pub async fn create_session(&self, params: CreateSessionParams<'_>) -> Result<(), AppError> {
         sqlx::query(
             "INSERT INTO auth.sessions (
                 id_user, refresh_token, expires_at,
@@ -394,7 +617,7 @@ impl SessionRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10)",
         )
         .bind(params.id_user)
-        .bind(&params.refresh_token_hash)
+        .bind(params.refresh_token_hash)
         .bind(params.expires_at)
         .bind(params.device_id)
         .bind(params.device_name)
@@ -405,7 +628,7 @@ impl SessionRepository {
         .bind(&params.metadata)
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
         Ok(())
     }
 
@@ -417,7 +640,7 @@ impl SessionRepository {
         ip_address: Option<IpNetwork>,
         ip_country: Option<&str>,
     ) -> Result<TouchSessionResult, AppError> {
-        let result = sqlx::query_as!(
+        sqlx::query_as!(
             TouchSessionResult,
             r#"
             SELECT id_user, expires_at
@@ -429,15 +652,9 @@ impl SessionRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-
-        // The DB function returns an empty result if session not found/expired
-        match result {
-            Some(r) if r.id_user.is_some() => Ok(r),
-            _ => Err(AppError::NotFound(
-                "Session not found or expired".to_string(),
-            )),
-        }
+        .map_err(DbError)?
+        .filter(|r| r.id_user.is_some())
+        .ok_or_else(|| AppError::token_invalid("session token"))
     }
 
     /// Revoke a single session by token hash.
@@ -452,12 +669,12 @@ impl SessionRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))
+        .map_err(|e| DbError(e).into())
     }
 
     /// Revoke all sessions for a user.
-    pub async fn revoke_all_user_sessions(&self, user_id: Uuid) -> Result<i64, AppError> {
-        let result = sqlx::query!(
+    pub async fn revoke_all_user_sessions(&self, user_id: Uuid) -> Result<u64, AppError> {
+        sqlx::query!(
             r#"
             DELETE FROM auth.sessions
              WHERE id_user = $1
@@ -467,8 +684,8 @@ impl SessionRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-        Ok(result.rows_affected() as i64)
+        .map(|r| r.rows_affected())
+        .map_err(|e| DbError(e).into())
     }
 
     /// Revoke all sessions except current.
@@ -476,8 +693,8 @@ impl SessionRepository {
         &self,
         user_id: Uuid,
         current_token_hash: &[u8],
-    ) -> Result<i64, AppError> {
-        let result = sqlx::query!(
+    ) -> Result<u64, AppError> {
+        sqlx::query!(
             r#"
             DELETE FROM auth.sessions
              WHERE id_user = $1
@@ -489,8 +706,8 @@ impl SessionRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-        Ok(result.rows_affected() as i64)
+        .map(|r| r.rows_affected())
+        .map_err(|e| DbError(e).into())
     }
 
     /// List all active sessions for a user.
@@ -522,16 +739,16 @@ impl SessionRepository {
         .bind(current_token_hash)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))
+        .map_err(|e| DbError(e).into())
     }
 
-    /// Revoke a session by device_id for a specific user.
+    /// Revoke a session by `device_id` for a specific user.
     pub async fn revoke_session_by_device_id(
         &self,
         user_id: Uuid,
         device_id: &str,
     ) -> Result<bool, AppError> {
-        let result = sqlx::query(
+        sqlx::query(
             "DELETE FROM auth.sessions
               WHERE id_user = $1
                 AND device_id = $2
@@ -541,17 +758,17 @@ impl SessionRepository {
         .bind(device_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-        Ok(result.rows_affected() > 0)
+        .map(|r| r.rows_affected() > 0)
+        .map_err(|e| DbError(e).into())
     }
 
-    /// Revoke all sessions except the one with the given device_id.
+    /// Revoke all sessions except the one with the given `device_id`.
     pub async fn revoke_sessions_except_device(
         &self,
         user_id: Uuid,
         current_device_id: &str,
-    ) -> Result<i64, AppError> {
-        let result = sqlx::query(
+    ) -> Result<u64, AppError> {
+        sqlx::query(
             "DELETE FROM auth.sessions
               WHERE id_user = $1
                 AND (device_id IS NULL OR device_id <> $2)
@@ -561,8 +778,8 @@ impl SessionRepository {
         .bind(current_device_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-        Ok(result.rows_affected() as i64)
+        .map(|r| r.rows_affected())
+        .map_err(|e| DbError(e).into())
     }
 }
 
@@ -573,12 +790,13 @@ pub struct OAuthStateRepository {
 }
 
 impl OAuthStateRepository {
+    #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     /// Create a new OAuth state.
-    pub async fn create_state(&self, params: CreateOAuthStateParams) -> Result<Uuid, AppError> {
+    pub async fn create_state(&self, params: CreateOAuthStateParams<'_>) -> Result<Uuid, AppError> {
         sqlx::query_scalar!(
             r#"
             INSERT INTO auth.oauth_states (state, code_verifier, provider, redirect_uri)
@@ -592,12 +810,12 @@ impl OAuthStateRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))
+        .map_err(|e| DbError(e).into())
     }
 
     /// Consume OAuth state (atomic get-and-delete).
     pub async fn consume_state(&self, state: &str) -> Result<ConsumedOAuthState, AppError> {
-        let result = sqlx::query_as!(
+        sqlx::query_as!(
             ConsumedOAuthState,
             r#"
             SELECT code_verifier,
@@ -609,15 +827,9 @@ impl OAuthStateRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-
-        // The DB function returns an empty result if state not found/expired
-        match result {
-            Some(r) if r.code_verifier.is_some() => Ok(r),
-            _ => Err(AppError::NotFound(
-                "OAuth state not found or expired".to_string(),
-            )),
-        }
+        .map_err(DbError)?
+        .filter(|r| r.code_verifier.is_some())
+        .ok_or_else(|| AppError::token_invalid("OAuth state"))
     }
 }
 
@@ -628,22 +840,25 @@ pub struct Database {
     pub sessions: SessionRepository,
     pub oauth_states: OAuthStateRepository,
     pub password_resets: PasswordResetRepository,
+    pub email_verifications: EmailVerificationRepository,
     pool: PgPool,
 }
 
 impl Database {
+    /// Creates a new database context with all repositories.
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        info!("Database initialized with auth schema");
         Self {
             users: UserRepository::new(pool.clone()),
             sessions: SessionRepository::new(pool.clone()),
             oauth_states: OAuthStateRepository::new(pool.clone()),
             password_resets: PasswordResetRepository::new(pool.clone()),
+            email_verifications: EmailVerificationRepository::new(pool.clone()),
             pool,
         }
     }
 
-    /// Check database health.
+    /// Check database health by executing a simple query.
     pub async fn health_check(&self) -> bool {
         sqlx::query_scalar!("SELECT 1 AS one")
             .fetch_one(&self.pool)
@@ -651,8 +866,10 @@ impl Database {
             .is_ok()
     }
 
-    /// Get the underlying connection pool.
-    pub fn pool(&self) -> &PgPool {
+    /// Returns a reference to the underlying connection pool.
+    #[inline]
+    #[must_use]
+    pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
 }
@@ -668,6 +885,7 @@ pub struct PasswordResetRepository {
 }
 
 impl PasswordResetRepository {
+    #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -676,9 +894,9 @@ impl PasswordResetRepository {
     /// Invalidates any existing tokens for the user.
     pub async fn create_token(
         &self,
-        params: CreatePasswordResetTokenParams,
+        params: CreatePasswordResetTokenParams<'_>,
     ) -> Result<Uuid, AppError> {
-        // First, invalidate any existing unused tokens for this user
+        // Invalidate any existing unused tokens for this user
         sqlx::query!(
             r#"
             UPDATE auth.password_reset_tokens
@@ -691,7 +909,7 @@ impl PasswordResetRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map_err(DbError)?;
 
         // Create new token
         sqlx::query_scalar!(
@@ -706,13 +924,13 @@ impl PasswordResetRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))
+        .map_err(|e| DbError(e).into())
     }
 
     /// Validate and consume a password reset token.
-    /// Returns the user_id if valid, marks token as used.
+    /// Returns the `user_id` if valid, marks token as used.
     pub async fn consume_token(&self, token_hash: &[u8]) -> Result<Uuid, AppError> {
-        let result = sqlx::query_scalar!(
+        sqlx::query_scalar!(
             r#"
             UPDATE auth.password_reset_tokens
                SET used_at = NOW()
@@ -725,14 +943,13 @@ impl PasswordResetRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-
-        result.ok_or_else(|| AppError::NotFound("Invalid or expired reset token".to_string()))
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::token_invalid("reset token"))
     }
 
     /// Check if a token hash is valid without consuming it.
     pub async fn validate_token(&self, token_hash: &[u8]) -> Result<Uuid, AppError> {
-        let result = sqlx::query_scalar!(
+        sqlx::query_scalar!(
             r#"
             SELECT id_user
               FROM auth.password_reset_tokens
@@ -744,14 +961,13 @@ impl PasswordResetRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
-
-        result.ok_or_else(|| AppError::NotFound("Invalid or expired reset token".to_string()))
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::token_invalid("reset token"))
     }
 
     /// Cleanup expired tokens (run periodically).
-    pub async fn cleanup_expired(&self) -> Result<i64, AppError> {
-        let result = sqlx::query!(
+    pub async fn cleanup_expired(&self) -> Result<u64, AppError> {
+        sqlx::query!(
             r#"
             DELETE FROM auth.password_reset_tokens
              WHERE expires_at < NOW() - INTERVAL '1 day'
@@ -760,8 +976,114 @@ impl PasswordResetRepository {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Unavailable(e.to_string()))?;
+        .map(|r| r.rows_affected())
+        .map_err(|e| DbError(e).into())
+    }
+}
 
-        Ok(result.rows_affected() as i64)
+// =============================================================================
+// Email Verification Repository
+// =============================================================================
+
+/// Email verification token repository for `auth.email_verification_tokens` operations.
+#[derive(Debug, Clone)]
+pub struct EmailVerificationRepository {
+    pool: PgPool,
+}
+
+impl EmailVerificationRepository {
+    #[must_use]
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new email verification token.
+    /// Invalidates any existing tokens for the user.
+    pub async fn create_token(
+        &self,
+        params: CreateEmailVerificationTokenParams<'_>,
+    ) -> Result<Uuid, AppError> {
+        // Invalidate any existing unused tokens for this user
+        sqlx::query!(
+            r#"
+            UPDATE auth.email_verification_tokens
+               SET used_at = NOW()
+             WHERE id_user = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+            "#,
+            params.id_user
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(DbError)?;
+
+        // Create new token
+        sqlx::query_scalar!(
+            r#"
+            INSERT INTO auth.email_verification_tokens (id_user, token_hash, expires_at)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            "#,
+            params.id_user,
+            params.token_hash,
+            params.expires_at
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DbError(e).into())
+    }
+
+    /// Validate and consume an email verification token.
+    /// Returns the `user_id` if valid, marks token as used.
+    pub async fn consume_token(&self, token_hash: &[u8]) -> Result<Uuid, AppError> {
+        sqlx::query_scalar!(
+            r#"
+            UPDATE auth.email_verification_tokens
+               SET used_at = NOW()
+             WHERE token_hash = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+            RETURNING id_user
+            "#,
+            token_hash
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::token_invalid("verification token"))
+    }
+
+    /// Check if a token hash is valid without consuming it.
+    pub async fn validate_token(&self, token_hash: &[u8]) -> Result<Uuid, AppError> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT id_user
+              FROM auth.email_verification_tokens
+             WHERE token_hash = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+            "#,
+            token_hash
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError)?
+        .ok_or_else(|| AppError::token_invalid("verification token"))
+    }
+
+    /// Cleanup expired tokens (run periodically).
+    pub async fn cleanup_expired(&self) -> Result<u64, AppError> {
+        sqlx::query!(
+            r#"
+            DELETE FROM auth.email_verification_tokens
+             WHERE expires_at < NOW() - INTERVAL '1 day'
+                OR used_at < NOW() - INTERVAL '1 day'
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(|e| DbError(e).into())
     }
 }

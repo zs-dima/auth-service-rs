@@ -22,16 +22,19 @@ pub struct RequestId(pub Arc<str>);
 
 impl RequestId {
     /// Generate a new random request ID.
+    #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
     }
 
-    /// Create from an existing string.
-    pub fn from_str(s: &str) -> Self {
+    /// Create from an existing string slice.
+    #[must_use]
+    fn from_header(s: &str) -> Self {
         Self(s.into())
     }
 
     /// Get as string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -50,11 +53,12 @@ impl std::fmt::Display for RequestId {
 }
 
 /// Tower layer for request ID propagation.
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct RequestIdLayer;
 
 impl RequestIdLayer {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -111,7 +115,7 @@ fn extract_or_generate<T>(req: &Request<T>) -> RequestId {
         .get(REQUEST_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty() && s.len() <= MAX_REQUEST_ID_LENGTH)
-        .map(RequestId::from_str)
+        .map(RequestId::from_header)
         .unwrap_or_default()
 }
 
@@ -127,8 +131,9 @@ mod tests {
     }
 
     #[test]
-    fn request_id_from_str_preserves_value() {
-        let id = RequestId::from_str("custom-id");
-        assert_eq!(id.as_str(), "custom-id");
+    fn request_id_displays_correctly() {
+        let id = RequestId::new();
+        assert!(!id.as_str().is_empty());
+        assert_eq!(format!("{id}"), id.as_str());
     }
 }

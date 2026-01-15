@@ -1,169 +1,188 @@
-# Auth Service (Rust)
+# Auth Service
 
-A high-performance authentication gRPC service written in Rust.
+High-performance authentication gRPC service built with Rust 1.92, Tonic, and SQLx.
+
+## Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                    gRPC / gRPC-Web / REST                         │
+├───────────────────────────────────────────────────────────────────┤
+│  Middleware: Auth (JWT) │ Request ID │ Client IP │ Rate Limit     │
+├───────────────────────────────────────────────────────────────────┤
+│                       AuthService (Tonic)                         │
+├───────┬──────────┬──────────┬─────────┬────────────┬──────────────┤
+│auth-db│auth-proto│auth-email│auth-core│auth-storage│auth-telemetry│
+│(SQLx) │ (Tonic)  │  (SMTP)  │(Shared) │    (S3)    │              │
+├───────┴──────────┴──────────┴─────────┴────────────┴──────────────┤
+│                  PostgreSQL │ S3-compatible                       │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Workspace Crates
+
+| Crate            | Purpose                                                                |
+| ---------------- | ---------------------------------------------------------------------- |
+| `auth-core`      | Shared types, errors (`AppError`), traits (`StatusExt`, `ValidateExt`) |
+| `auth-db`        | SQLx queries with compile-time verification                            |
+| `auth-proto`     | Generated protobuf code from Tonic                                     |
+| `auth-email`     | SMTP email delivery                                                    |
+| `auth-mailjet`   | Mailjet API integration                                                |
+| `auth-storage`   | S3-compatible object storage                                           |
+| `auth-telemetry` | Tracing, metrics, OpenTelemetry                                        |
 
 ## Features
 
-- **gRPC API** with streaming support using Tonic
-- **JWT Authentication** with access and refresh tokens
-- **PostgreSQL Database** using SQLx with compile-time query verification
-- **Password Hashing** using argon2
-- **Image Processing** with blurhash generation for avatars
-- **Health Checks** via gRPC health protocol
-- **Graceful Shutdown** handling SIGTERM/SIGINT
-- **Structured Logging** with tracing (JSON or human-readable)
-- **Docker Support** with multi-stage builds
-
-## Prerequisites
-
-- Rust 1.85+
-- PostgreSQL 14+
-- Protocol Buffers compiler (protoc)
+- **OWASP-compliant** authentication with account lockout and generic error messages
+- **Multi-factor authentication** (TOTP, SMS, Email, Recovery codes)
+- **OAuth 2.0** with PKCE (Google, GitHub, Microsoft, Apple, Facebook)
+- **Session management** with device tracking and geolocation
+- **JWT tokens** with configurable TTL (access + refresh)
+- **Streaming RPCs** for efficient bulk data transfer
+- **gRPC-Web** support for browser clients
+- **OpenTelemetry** tracing and Sentry error tracking
 
 ## Quick Start
 
-1. **Clone and setup environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
+```bash
+# 1. Configure environment
+cp configs/.env.example configs/development.env
 
-2. **Setup database:**
-   ```bash
-   # Run the schema from ../db/schema.sql
-   psql -U admin -d auth -f ../db/schema.sql
-   ```
+# 2. Run database migrations
+make db
 
-3. **Build and run:**
-   ```bash
-   cargo run
-   ```
+# 3. Start the service
+make run
+```
 
-## Configuration
+## Environment Variables
 
-Environment variables (see [src/config.rs](src/config.rs)):
+### Required
 
-| Variable                   | Required | Description                                     |
-| -------------------------- | -------- | ----------------------------------------------- |
-| `GRPC_ADDRESS`             | No       | gRPC server address (default: `0.0.0.0:50051`)  |
-| `HTTP_ADDRESS`             | No       | HTTP server for file ops (e.g. `0.0.0.0:8080`)  |
-| `GRPC_WEB`                 | No       | Enable gRPC-Web (HTTP/1.1) (`true`/`false`)     |
-| `CORS_ALLOW_ORIGINS`       | No       | CORS origins (comma-separated or `*`)           |
-| `JWT_SECRET_KEY`           | Yes      | Secret key for JWT signing (min 32 chars)       |
-| `ACCESS_TOKEN_TTL_MINUTES` | No       | Access token lifetime (default: `15`)           |
-| `REFRESH_TOKEN_TTL_DAYS`   | No       | Refresh token lifetime (default: `7`)           |
-| `DB_URL`                   | Yes      | PostgreSQL connection URL                       |
-| `DB_PASSWORD`              | No       | Database password (URL-encoded into DB_URL)     |
-| `DB_POOL_MIN`              | No       | Database pool min size (default: `2`)           |
-| `DB_POOL_MAX`              | No       | Database pool max size (default: `10`)          |
-| `DB_CONNECT_TIMEOUT`       | No       | DB connect timeout in seconds (default: `30`)   |
-| `GRPC_API_REFLECTION`      | No       | Enable gRPC reflection (`true`/`false`)         |
-| `CONCURRENCY_LIMIT`        | No       | Max concurrent requests (default: `100`)        |
-| `MAX_PHOTO_BYTES`          | No       | Max photo upload size in bytes (default: `2MB`) |
-| `LOG_LEVEL`                | No       | Log level (TRACE, DEBUG, INFO, WARN, ERROR)     |
-| `JSON_LOGS`                | No       | Use JSON log format (default: `true`)           |
-| `OTLP_ENDPOINT`            | No       | OpenTelemetry OTLP endpoint for tracing         |
+| Variable         | Description                                |
+| ---------------- | ------------------------------------------ |
+| `DB_URL`         | PostgreSQL URL: `postgres://user:@host/db` |
+| `JWT_SECRET_KEY` | JWT signing key (min 32 chars)             |
 
-## Debugging (no Envoy)
+### Server
 
-You can debug the service without Envoy/proxies using native gRPC tools.
-
-### Native gRPC with grpcurl
-
-1. Enable reflection (optional but convenient):
-   - `GRPC_API_REFLECTION=true`
-2. Call the service:
-   - `grpcurl -plaintext localhost:50051 list`
-   - `grpcurl -plaintext localhost:50051 auth.AuthService/SignIn -d "{\"email\":\"user@example.com\",\"password\":\"...\"}"`
-
-### gRPC-Web (browser)
-
-For browser clients, use `GRPC_WEB=true`. In production, use a reverse proxy (nginx, Envoy) for CORS.
-For local development, your frontend dev server can proxy gRPC-Web requests.
-
-## API Endpoints
+| Variable              | Default         | Description                              |
+| --------------------- | --------------- | ---------------------------------------- |
+| `GRPC_ADDRESS`        | `0.0.0.0:50051` | Server bind address                      |
+| `GRPC_WEB`            | `true`          | Enable gRPC-Web (HTTP/1.1)               |
+| `GRPC_API_REFLECTION` | `false`         | Enable gRPC reflection                   |
+| `CORS_ALLOW_ORIGINS`  | —               | Allowed origins (comma-separated or `*`) |
+| `CONCURRENCY_LIMIT`   | `100`           | Max concurrent requests                  |
 
 ### Authentication
 
-- `SignIn(SignInRequest) -> AuthInfo` - Authenticate user with email/password
-- `SignOut(Empty) -> ResultReply` - End user session
-- `RefreshTokens(RefreshTokenRequest) -> RefreshTokenReply` - Refresh access token
-- `ValidateCredentials(Empty) -> ResultReply` - Validate current JWT
+| Variable                       | Default | Description                |
+| ------------------------------ | ------- | -------------------------- |
+| `ACCESS_TOKEN_TTL_MINUTES`     | `15`    | Access token lifetime      |
+| `REFRESH_TOKEN_TTL_DAYS`       | `7`     | Refresh token lifetime     |
+| `PASSWORD_RESET_TTL_MINUTES`   | `30`    | Password reset link expiry |
+| `EMAIL_VERIFICATION_TTL_HOURS` | `24`    | Email verification expiry  |
 
-### Password Management
+### Database
 
-- `ResetPassword(ResetPasswordRequest) -> ResultReply` - Request password reset
-- `SetPassword(SetPasswordRequest) -> ResultReply` - Set new password
+| Variable             | Default | Description                       |
+| -------------------- | ------- | --------------------------------- |
+| `DB_PASSWORD`        | —       | Password (inserted into `DB_URL`) |
+| `DB_POOL_MIN`        | `2`     | Min pool connections              |
+| `DB_POOL_MAX`        | `10`    | Max pool connections              |
+| `DB_CONNECT_TIMEOUT` | `30`    | Connection timeout (seconds)      |
 
-### User Management
+### Storage (S3)
 
-- `LoadUsersInfo(Empty) -> stream UserInfo` - Get all users' basic info
-- `LoadUserAvatar(LoadUserAvatarRequest) -> stream UserAvatar` - Get user avatars
-- `LoadUsers(UserId) -> stream User` - Get all users with details
-- `CreateUser(CreateUserRequest) -> ResultReply` - Create new user
-- `UpdateUser(UpdateUserRequest) -> ResultReply` - Update existing user
-- `SaveUserPhoto(UserPhoto) -> ResultReply` - Upload user photo
+| Variable               | Description                    |
+| ---------------------- | ------------------------------ |
+| `S3_URL`               | S3 endpoint URL                |
+| `S3_ACCESS_KEY_ID`     | Access key ID                  |
+| `S3_SECRET_ACCESS_KEY` | Secret access key              |
+| `MAX_PHOTO_BYTES`      | Max upload size (default: 2MB) |
 
-## Project Structure
+### Email (SMTP or Mailjet)
 
-```
-src/
-│   ├── main.rs           # Entry point and server setup
-│   ├── lib.rs            # Library exports
-│   ├── config.rs         # Configuration management
-│   ├── error.rs          # Error types
-│   ├── auth/
-│   │   ├── mod.rs
-│   │   ├── jwt.rs        # JWT token generation/validation
-│   │   ├── encrypt.rs    # Password hashing
-│   │   └── interceptor.rs # gRPC authentication interceptor
-│   ├── db/
-│   │   ├── mod.rs
-│   │   ├── models.rs     # Database models
-│   │   └── repository.rs # Database queries
-│   ├── proto/
-│   │   └── *.rs          # Generated protobuf code
-│   ├── service/
-│   │   ├── mod.rs
-│   │   └── auth_service.rs # gRPC service implementation
-│   └── util/
-│       ├── mod.rs
-│       └── image.rs      # Image processing utilities
-proto/
-│   ├── auth.proto        # Service definitions
-│   └── core.proto        # Shared types
-Cargo.toml
-build.rs              # Protobuf compilation
-Dockerfile
-Makefile
-```
+| Variable             | Description                        |
+| -------------------- | ---------------------------------- |
+| `EMAIL_PROVIDER`     | `smtp` or `mailjet`                |
+| `EMAIL_SENDER`       | Sender: `Name <email@example.com>` |
+| `DOMAIN`             | Application domain for email links |
+| `SMTP_URL`           | SMTP URL: `smtp://user@host:port`  |
+| `SMTP_PASSWORD`      | SMTP password                      |
+| `MAILJET_API_KEY`    | Mailjet public key                 |
+| `MAILJET_API_SECRET` | Mailjet private key                |
+
+### Observability
+
+| Variable        | Default | Description                            |
+| --------------- | ------- | -------------------------------------- |
+| `LOG_LEVEL`     | `INFO`  | TRACE, DEBUG, INFO, WARN, ERROR        |
+| `JSON_LOGS`     | `true`  | JSON log format                        |
+| `OTLP_ENDPOINT` | —       | OpenTelemetry collector endpoint       |
+| `SENTRY_DSN`    | —       | Sentry error tracking DSN              |
+| `ENVIRONMENT`   | —       | Environment name (production, staging) |
+
+### Secrets from Files
+
+All secrets support `*_FILE` variants for Docker/Kubernetes secrets:
+- `JWT_SECRET_KEY_FILE`, `DB_PASSWORD_FILE`, `S3_SECRET_ACCESS_KEY_FILE`
+- `SMTP_PASSWORD_FILE`, `MAILJET_API_SECRET_FILE`
+
+## API Overview
+
+### Authentication
+- `Authenticate` — Login with email/phone + password
+- `SignUp` — Register new account
+- `VerifyMfa` — Complete MFA challenge
+- `RefreshTokens` — Refresh access token
+- `SignOut` — End session
+
+### OAuth 2.0
+- `GetOAuthUrl` — Get authorization URL with PKCE
+- `ExchangeOAuthCode` — Exchange code for tokens
+- `LinkOAuthProvider` / `UnlinkOAuthProvider` — Manage linked accounts
+
+### Password & Recovery
+- `ChangePassword` — Change password (requires current)
+- `RecoveryStart` / `RecoveryConfirm` — Password reset flow
+
+### MFA Management
+- `GetMfaStatus` / `SetupMfa` / `ConfirmMfaSetup` / `DisableMfa`
+
+### Sessions
+- `ListSessions` / `RevokeSession` / `RevokeOtherSessions`
+
+### User Management (Admin)
+- `LoadUsersInfo` / `LoadUsers` / `CreateUser` / `UpdateUser`
 
 ## Development
 
 ```bash
-# Watch mode (auto-rebuild on changes)
-make watch
+make watch      # Auto-rebuild on changes
+make test       # Run tests
+make fmt lint   # Format and lint
+make pre-commit # All checks before commit
+```
 
-# Run tests
-make test
+### Testing with grpcurl
 
-# Format and lint
-make fmt lint
+```bash
+# List services
+grpcurl -plaintext localhost:50051 list
 
-# Pre-commit checks
-make pre-commit
+# Authenticate
+grpcurl -plaintext localhost:50051 auth.AuthService/Authenticate \
+  -d '{"identifier":"user@example.com","password":"..."}'
 ```
 
 ## Docker
 
 ```bash
-# Build image
-make docker
-
-# Run container
-make docker-run
+make docker      # Build image
+make docker-run  # Run container
 ```
 
 ## License
 
-See [LICENSE](../LICENSE) file.
+See [LICENSE](LICENSE) file.

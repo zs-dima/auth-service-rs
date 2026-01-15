@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id_user\n              FROM auth.email_verification_tokens\n             WHERE token_hash = $1\n               AND used_at IS NULL\n               AND expires_at > NOW()\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id_user",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "10fceb1c2c954815a68c0c85f0d210f3eebbebce88c02949ec266dfc9bc02f34"
+}

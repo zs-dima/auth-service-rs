@@ -4,7 +4,6 @@
 //! File-based secrets take precedence: `DB_PASSWORD_FILE` overrides `DB_PASSWORD`.
 
 use std::fs;
-use std::path::Path;
 use std::time::Duration;
 
 use clap::Parser;
@@ -58,7 +57,6 @@ pub struct Config {
     // =========================================================================
     // Secrets (support both direct value and _FILE variants)
     // =========================================================================
-
     /// JWT secret key for signing tokens (min 32 chars)
     #[arg(long, env = "JWT_SECRET_KEY")]
     jwt_secret_key: Option<SecretString>,
@@ -67,7 +65,7 @@ pub struct Config {
     #[arg(long, env = "JWT_SECRET_KEY_FILE")]
     jwt_secret_key_file: Option<String>,
 
-    /// Database password (inserted into DB_URL)
+    /// Database password (inserted into `DB_URL`)
     #[arg(long, env = "DB_PASSWORD")]
     db_password: Option<String>,
 
@@ -83,7 +81,7 @@ pub struct Config {
     #[arg(long, env = "S3_SECRET_ACCESS_KEY_FILE")]
     s3_secret_access_key_file: Option<String>,
 
-    /// SMTP password (separate from SMTP_URL for security)
+    /// SMTP password (separate from `SMTP_URL` for security)
     #[arg(long, env = "SMTP_PASSWORD")]
     smtp_password: Option<String>,
 
@@ -94,7 +92,6 @@ pub struct Config {
     // =========================================================================
     // Token TTLs
     // =========================================================================
-
     /// Access token TTL in minutes
     #[arg(long, env = "ACCESS_TOKEN_TTL_MINUTES", default_value = "15")]
     pub access_token_ttl_minutes: u64,
@@ -107,10 +104,13 @@ pub struct Config {
     #[arg(long, env = "PASSWORD_RESET_TTL_MINUTES", default_value = "30")]
     pub password_reset_ttl_minutes: u32,
 
+    /// Email verification token expiration in hours (default: 24)
+    #[arg(long, env = "EMAIL_VERIFICATION_TTL_HOURS", default_value = "24")]
+    pub email_verification_ttl_hours: u32,
+
     // =========================================================================
     // Database Configuration
     // =========================================================================
-
     /// Database connection URL (password placeholder: user:@host)
     #[arg(long, env = "DB_URL")]
     pub db_url: String,
@@ -130,7 +130,6 @@ pub struct Config {
     // =========================================================================
     // Logging & Observability
     // =========================================================================
-
     /// Log level (TRACE, DEBUG, INFO, WARN, ERROR)
     #[arg(long, env = "LOG_LEVEL", default_value = "INFO")]
     pub log_level: String,
@@ -154,7 +153,6 @@ pub struct Config {
     // =========================================================================
     // Rate Limiting & Limits
     // =========================================================================
-
     /// Max concurrent requests
     #[arg(long, env = "CONCURRENCY_LIMIT", default_value = "100")]
     pub rate_limit_rps: u64,
@@ -166,8 +164,7 @@ pub struct Config {
     // =========================================================================
     // S3 Storage Configuration
     // =========================================================================
-
-    /// S3 endpoint URL (e.g., http://localhost:9000/bucket-name/)
+    /// S3 endpoint URL (e.g., `http://localhost:9000/bucket-name/`)
     #[arg(long, env = "S3_URL")]
     pub s3_url: Option<String>,
 
@@ -178,27 +175,53 @@ pub struct Config {
     // =========================================================================
     // GeoIP Configuration
     // =========================================================================
-
-    /// GeoIP database path (MaxMind GeoLite2-Country.mmdb)
+    /// `GeoIP` database path (`MaxMind` `GeoLite2-Country.mmdb`)
     #[arg(long, env = "GEOIP_DB_PATH")]
     pub geoip_db_path: Option<String>,
 
     // =========================================================================
     // Email Configuration
     // =========================================================================
+    /// Email provider: "smtp" (default) or "mailjet"
+    #[arg(long, env = "EMAIL_PROVIDER", default_value = "smtp")]
+    pub email_provider: String,
 
     /// Application domain (used for email links and sender address)
     #[arg(long, env = "DOMAIN")]
     pub domain: Option<String>,
 
-    /// SMTP URL (without password): smtp://user@host:port?tls=starttls
-    /// Password is provided separately via SMTP_PASSWORD or SMTP_PASSWORD_FILE
+    /// Email sender: "Name <email@example.com>"
+    #[arg(long, env = "EMAIL_SENDER")]
+    pub email_sender: Option<String>,
+
+    /// SMTP URL (without password): `smtp://user@host:port?tls=starttls`
+    /// Password is provided separately via `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`
     #[arg(long, env = "SMTP_URL")]
     pub smtp_url: Option<String>,
 
-    /// Email sender (e.g., "App Name <noreply@example.com>")
-    #[arg(long, env = "SMTP_SENDER")]
-    pub smtp_sender: Option<String>,
+    /// Mailjet API key (public key) - alternative to SMTP
+    #[arg(long, env = "MAILJET_API_KEY")]
+    pub mailjet_api_key: Option<String>,
+
+    /// Mailjet API secret (private key)
+    #[arg(long, env = "MAILJET_API_SECRET")]
+    mailjet_api_secret: Option<String>,
+
+    /// Path to file containing Mailjet API secret
+    #[arg(long, env = "MAILJET_API_SECRET_FILE")]
+    mailjet_api_secret_file: Option<String>,
+
+    /// Mailjet template ID for password reset emails
+    #[arg(long, env = "MAILJET_PASSWORD_RESET_TEMPLATE_ID")]
+    pub mailjet_password_reset_template_id: Option<u64>,
+
+    /// Mailjet template ID for welcome emails (optional)
+    #[arg(long, env = "MAILJET_WELCOME_TEMPLATE_ID")]
+    pub mailjet_welcome_template_id: Option<u64>,
+
+    /// Mailjet template ID for password changed confirmation (optional)
+    #[arg(long, env = "MAILJET_PASSWORD_CHANGED_TEMPLATE_ID")]
+    pub mailjet_password_changed_template_id: Option<u64>,
 }
 
 /// Configuration validation errors.
@@ -220,6 +243,10 @@ pub enum ConfigError {
 
 impl Config {
     /// Parse and validate configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if configuration validation fails.
     pub fn init() -> anyhow::Result<Self> {
         let config = Self::parse();
         config.validate()?;
@@ -232,7 +259,7 @@ impl Config {
         if jwt_secret.is_none() {
             return Err(ConfigError::JwtSecretMissing);
         }
-        if jwt_secret.map(|s| s.expose_secret().len()).unwrap_or(0) < MIN_JWT_SECRET_LEN {
+        if jwt_secret.map_or(0, |s| s.expose_secret().len()) < MIN_JWT_SECRET_LEN {
             return Err(ConfigError::JwtSecretTooShort);
         }
         if self.access_token_ttl_minutes == 0 {
@@ -294,6 +321,15 @@ impl Config {
         )
     }
 
+    /// Get Mailjet API secret (from file or env var).
+    #[must_use]
+    pub fn mailjet_api_secret(&self) -> Option<String> {
+        resolve_secret(
+            self.mailjet_api_secret_file.as_deref(),
+            self.mailjet_api_secret.as_deref(),
+        )
+    }
+
     // =========================================================================
     // Derived Configuration
     // =========================================================================
@@ -326,16 +362,49 @@ impl Config {
             Some(password) => {
                 let encoded = urlencoding::encode(&password);
                 // Insert password after username: user@ -> user:pass@
-                Some(url.replacen("@", &format!(":{encoded}@"), 1))
+                Some(url.replacen('@', &format!(":{encoded}@"), 1))
             }
             None => Some(url.clone()),
         }
     }
 
-    /// Check if email sending is configured.
+    /// Check if email sending is configured (SMTP or Mailjet).
+    #[allow(dead_code)]
     #[must_use]
     pub fn email_enabled(&self) -> bool {
-        self.smtp_url.is_some() && self.smtp_sender.is_some() && self.domain.is_some()
+        self.domain.is_some() && (self.smtp_enabled() || self.mailjet_enabled())
+    }
+
+    /// Check if SMTP is configured.
+    #[must_use]
+    pub fn smtp_enabled(&self) -> bool {
+        self.smtp_url.is_some() && self.email_sender.is_some()
+    }
+
+    /// Check if Mailjet is configured.
+    #[must_use]
+    pub fn mailjet_enabled(&self) -> bool {
+        self.mailjet_api_key.is_some()
+            && self.mailjet_api_secret().is_some()
+            && self.email_sender.is_some()
+            && self.mailjet_password_reset_template_id.is_some()
+    }
+
+    /// Parse email sender into (name, email) tuple.
+    /// Format: "Name <email@example.com>" or just "email@example.com"
+    #[must_use]
+    pub fn parse_email_sender(&self) -> Option<(String, String)> {
+        let sender = self.email_sender.as_ref()?;
+        // Parse "Name <email>" format
+        if let Some(start) = sender.find('<')
+            && let Some(end) = sender.find('>')
+        {
+            let name = sender[..start].trim().to_string();
+            let email = sender[start + 1..end].trim().to_string();
+            return Some((name, email));
+        }
+        // Just email address
+        Some((String::new(), sender.clone()))
     }
 }
 
@@ -354,6 +423,7 @@ mod tests {
             access_token_ttl_minutes: 15,
             refresh_token_ttl_days: 7,
             password_reset_ttl_minutes: 30,
+            email_verification_ttl_hours: 24,
             db_url: "postgres://user:@localhost/auth".to_string(),
             db_password: Some("secret".to_string()),
             db_password_file: None,
@@ -372,11 +442,18 @@ mod tests {
             s3_secret_access_key: None,
             s3_secret_access_key_file: None,
             geoip_db_path: None,
+            email_provider: "mailjet".to_string(),
             domain: Some("example.com".to_string()),
+            email_sender: Some("Test App <test@example.com>".to_string()),
             smtp_url: None,
             smtp_password: None,
             smtp_password_file: None,
-            smtp_sender: None,
+            mailjet_api_key: None,
+            mailjet_api_secret: None,
+            mailjet_api_secret_file: None,
+            mailjet_password_reset_template_id: None,
+            mailjet_welcome_template_id: None,
+            mailjet_password_changed_template_id: None,
         }
     }
 
@@ -427,7 +504,7 @@ mod tests {
     fn email_enabled_when_all_configured() {
         let mut config = test_config();
         config.smtp_url = Some("smtp://user@localhost:25".to_string());
-        config.smtp_sender = Some("Test <test@example.com>".to_string());
+        config.email_sender = Some("Test <test@example.com>".to_string());
         config.domain = Some("example.com".to_string());
         assert!(config.email_enabled());
     }

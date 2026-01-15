@@ -9,68 +9,621 @@ import "validate/validate.proto";
 
 import "core.proto";
 
+// =============================================================================
+// Auth Service - Modern Authentication API
+// =============================================================================
+// Design principles: SIMPLE, RELIABLE, EXPANDABLE
+//
+// OWASP Authentication Cheat Sheet compliance:
+// - Multi-identifier (email, phone)
+// - MFA support (blocks 99.9% of automated attacks)
+// - OAuth 2.0 with PKCE
+// - Account lockout (brute-force protection)
+// - Generic error messages (prevent enumeration)
+// - Password change requires current password
+//
+// Core flows:
+//   Registration: SignUp → (optional) ConfirmVerification → Active account
+//   Login:        Authenticate → (if MFA) VerifyMfa → Tokens issued
+//   Password:     ChangePassword (has password) | RecoveryStart/Confirm (forgot/none)
+//
+// Expansion points:
+// - WebAuthn/Passkeys: Add MFA_METHOD_PASSKEY
+// - Magic links: Add RequestMagicLink RPC
+// - Trusted devices: Skip MFA on known devices
+// =============================================================================
+
 service AuthService {
-  rpc SignIn(SignInRequest) returns (AuthInfo);
-  rpc SignOut(google.protobuf.Empty) returns (core.ResultReply);
+  // =========================================================================
+  // Primary Authentication
+  // =========================================================================
+
+  // Authenticate with identifier (email or phone) and password
+  // Returns AuthResult with tokens on success, or error status with lockout info
+  rpc Authenticate(AuthenticateRequest) returns (AuthResult);
+
+  // Refresh access token using refresh token
   rpc RefreshTokens(RefreshTokenRequest) returns (RefreshTokenReply);
+
+  // Validate current session/credentials
   rpc ValidateCredentials(google.protobuf.Empty) returns (core.ResultReply);
 
-  rpc ResetPassword(ResetPasswordRequest) returns (core.ResultReply);
+  // Sign out and invalidate current session
+  rpc SignOut(google.protobuf.Empty) returns (core.ResultReply);
+
+  // Register a new account
+  // Returns AUTH_STATUS_SUCCESS with tokens, or AUTH_STATUS_PENDING if verification required
+  rpc SignUp(SignUpRequest) returns (AuthResult);
+
+  // Complete MFA verification (when Authenticate returns MFA_REQUIRED)
+  rpc VerifyMfa(VerifyMfaRequest) returns (AuthResult);
+
+  // =========================================================================
+  // OAuth 2.0 / OpenID Connect
+  // =========================================================================
+  // Uses DB: oauth_states (PKCE), providers (linked accounts)
+
+  // Get OAuth authorization URL with PKCE state
+  rpc GetOAuthUrl(GetOAuthUrlRequest) returns (OAuthUrlReply);
+
+  // Exchange OAuth callback code for tokens (login or register)
+  rpc ExchangeOAuthCode(ExchangeOAuthCodeRequest) returns (AuthResult);
+
+  // Link OAuth provider to existing authenticated account
+  rpc LinkOAuthProvider(LinkOAuthProviderRequest) returns (core.ResultReply);
+
+  // Unlink OAuth provider from account
+  rpc UnlinkOAuthProvider(UnlinkOAuthProviderRequest) returns (core.ResultReply);
+
+  // List linked OAuth providers for current user
+  rpc ListLinkedProviders(google.protobuf.Empty) returns (LinkedProvidersReply);
+
+  // =========================================================================
+  // Password Management & Recovery
+  // =========================================================================
+  // Password operations:
+  // - ChangePassword: User changes own password (requires current password - OWASP)
+  // - RecoveryStart/Confirm: Forgot password OR OAuth-only user adding password
+  // - SetPassword: Admin-only override
+
+  // Start password recovery (always returns success to prevent enumeration)
+  // Also used by OAuth-only users to add a password to their account
+  rpc RecoveryStart(RecoveryStartRequest) returns (core.ResultReply);
+
+  // Confirm recovery with token and set new password
+  rpc RecoveryConfirm(RecoveryConfirmRequest) returns (core.ResultReply);
+
+  // Change password (requires current password - OWASP requirement)
+  // Use RecoveryStart/Confirm if user forgot password or has no password
+  rpc ChangePassword(ChangePasswordRequest) returns (core.ResultReply);
+
+  // Set password (admin only - bypasses current password requirement)
   rpc SetPassword(SetPasswordRequest) returns (core.ResultReply);
 
-  rpc LoadUsersInfo(LoadUsersInfoRequest) returns (stream UserInfo);
-  rpc LoadUsers(UserId) returns (stream User);
-  rpc CreateUser(CreateUserRequest) returns (core.ResultReply);
-  rpc UpdateUser(UpdateUserRequest) returns (core.ResultReply);
+  // =========================================================================
+  // Email/Phone Verification
+  // =========================================================================
+  // Uses DB: users.email_verified, users.phone_verified
 
-  // Avatar management with presigned URLs (client uploads directly to S3)
-  // Get a presigned URL for uploading avatar directly to S3
-  rpc GetAvatarUploadUrl(GetAvatarUploadUrlRequest) returns (AvatarUploadUrl);
-  // Confirm avatar upload completed
-  rpc ConfirmAvatarUpload(ConfirmAvatarUploadRequest) returns (core.ResultReply);
-  // Delete user avatar from S3
-  rpc DeleteUserAvatar(UserId) returns (core.ResultReply);
+  // Request verification code for email or phone
+  rpc RequestVerification(RequestVerificationRequest) returns (core.ResultReply);
 
-  // Session management
-  // List all active sessions for the current user
+  // Confirm verification with code
+  rpc ConfirmVerification(ConfirmVerificationRequest) returns (core.ResultReply);
+
+  // =========================================================================
+  // MFA Management
+  // =========================================================================
+  // Simple MFA lifecycle: GetStatus → Setup → Verify → Enable/Disable
+
+  // Get current MFA status for user
+  rpc GetMfaStatus(google.protobuf.Empty) returns (MfaStatusReply);
+
+  // Begin MFA setup (returns secret/challenge based on method)
+  rpc SetupMfa(SetupMfaRequest) returns (SetupMfaReply);
+
+  // Confirm MFA setup with verification code
+  rpc ConfirmMfaSetup(ConfirmMfaSetupRequest) returns (MfaSetupResult);
+
+  // Disable MFA (requires password verification)
+  rpc DisableMfa(DisableMfaRequest) returns (core.ResultReply);
+
+  // =========================================================================
+  // Session Management
+  // =========================================================================
+
+  // List all active sessions for current user
   rpc ListSessions(google.protobuf.Empty) returns (ListSessionsReply);
-  // Revoke a specific session
+
+  // Revoke a specific session by device_id
   rpc RevokeSession(RevokeSessionRequest) returns (core.ResultReply);
+
   // Revoke all sessions except current
   rpc RevokeOtherSessions(google.protobuf.Empty) returns (RevokeSessionsReply);
+
+  // =========================================================================
+  // User Management (Admin)
+  // =========================================================================
+
+  // Load user info (streaming)
+  rpc LoadUsersInfo(LoadUsersInfoRequest) returns (stream UserInfo);
+
+  // Load users (streaming)
+  rpc LoadUsers(UserId) returns (stream User);
+
+  // Create a new user
+  rpc CreateUser(CreateUserRequest) returns (core.ResultReply);
+
+  // Update user
+  rpc UpdateUser(UpdateUserRequest) returns (core.ResultReply);
+
+  // =========================================================================
+  // Avatar Management
+  // =========================================================================
+
+  // Get presigned URL for avatar upload
+  rpc GetAvatarUploadUrl(GetAvatarUploadUrlRequest) returns (AvatarUploadUrl);
+
+  // Confirm avatar upload completed
+  rpc ConfirmAvatarUpload(ConfirmAvatarUploadRequest) returns (core.ResultReply);
+
+  // Delete user avatar
+  rpc DeleteUserAvatar(UserId) returns (core.ResultReply);
 }
 
-message ResetPasswordRequest {
-  string email = 1 [(validate.rules).string.email = true];
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+// Type of identifier for authentication
+// Maps to DB: `users.email` (email domain), `users.phone` (`phone_e164` domain)
+enum IdentifierType {
+  IDENTIFIER_TYPE_UNSPECIFIED = 0; // Auto-detect based on format (@ = email, + = phone)
+  IDENTIFIER_TYPE_EMAIL       = 1; // Email address
+  IDENTIFIER_TYPE_PHONE       = 2; // Phone number in E.164 format (+1234567890)
 }
 
-message SetPasswordRequest {
-  core.UUID user_id  = 1 [(validate.rules).message.required = true];
-  string    email    = 2 [(validate.rules).string.email = true];
-  string    password = 3 [(validate.rules).string.min_len = 5];
+// OAuth providers - matches DB enum: oauth_provider
+enum OAuthProvider {
+  OAUTH_PROVIDER_UNSPECIFIED = 0;
+  OAUTH_PROVIDER_GOOGLE      = 1;
+  OAUTH_PROVIDER_GITHUB      = 2;
+  OAUTH_PROVIDER_MICROSOFT   = 3;
+  OAUTH_PROVIDER_APPLE       = 4;
+  OAUTH_PROVIDER_FACEBOOK    = 5;
 }
 
-message SignInRequest {
-  string     email           = 1 [(validate.rules).string.email = true];
-  string     password        = 2 [(validate.rules).string.min_len = 5];
-  core.UUID  installation_id = 3 [(validate.rules).message.required = true];
-  ClientInfo client_info     = 4 [(validate.rules).message.required = true];
+// User account status - matches DB enum: user_status
+enum UserStatus {
+  USER_STATUS_UNSPECIFIED = 0;
+  USER_STATUS_PENDING     = 1; // Awaiting email/phone verification
+  USER_STATUS_ACTIVE      = 2; // Fully active user
+  USER_STATUS_SUSPENDED   = 3; // Temporarily disabled by admin
+  USER_STATUS_DELETED     = 4; // Soft-deleted (retained for audit)
 }
 
-message LoadUsersInfoRequest {
-  core.UUID          user_id  = 1; // Impersonated user id
-  repeated core.UUID user_ids = 2; // Optional; if empty, load all users
+// User role - maps to DB roles.id (admin, user, guest)
+enum UserRole {
+  USER_ROLE_UNSPECIFIED = 0;
+  USER_ROLE_ADMIN       = 1; // maps to 'admin'
+  USER_ROLE_USER        = 2; // maps to 'user'
+  USER_ROLE_GUEST       = 3; // maps to 'guest'
+}
+
+// Authentication result status
+enum AuthStatus {
+  AUTH_STATUS_UNSPECIFIED  = 0;
+  AUTH_STATUS_SUCCESS      = 1; // Fully authenticated, tokens provided
+  AUTH_STATUS_MFA_REQUIRED = 2; // First factor passed, MFA verification needed
+  AUTH_STATUS_FAILED       = 3; // Invalid credentials (generic - OWASP)
+  AUTH_STATUS_LOCKED       = 4; // Account temporarily locked (see lockout_info)
+  AUTH_STATUS_SUSPENDED    = 5; // Account suspended by admin
+  AUTH_STATUS_PENDING      = 6; // Account pending verification
+}
+
+// Verification type for email/phone
+enum VerificationType {
+  VERIFICATION_TYPE_UNSPECIFIED = 0;
+  VERIFICATION_TYPE_EMAIL       = 1;
+  VERIFICATION_TYPE_PHONE       = 2;
+}
+
+// MFA method types - extensible for future methods
+enum MfaMethod {
+  MFA_METHOD_UNSPECIFIED   = 0;
+  MFA_METHOD_TOTP          = 1; // Time-based OTP (RFC 6238) - authenticator apps
+  MFA_METHOD_SMS           = 2; // SMS OTP (less secure, but widely used)
+  MFA_METHOD_EMAIL         = 3; // Email OTP
+  MFA_METHOD_RECOVERY_CODE = 4; // One-time recovery codes
+  // Future: MFA_METHOD_PASSKEY = 5; // WebAuthn/FIDO2
+}
+
+// =============================================================================
+// AUTHENTICATION MESSAGES
+// =============================================================================
+
+// Unified authentication request supporting multiple identifier types
+message AuthenticateRequest {
+  // User identifier (email or phone in E.164 format)
+  string identifier = 1 [(validate.rules).string = {min_len: 1, max_len: 254}];
+
+  // Type of identifier (auto-detected if not specified based on format)
+  IdentifierType identifier_type = 2;
+
+  // Password
+  string password = 3 [(validate.rules).string = {min_len: 1, max_len: 128}];
+
+  // Unique installation/app instance ID
+  core.UUID installation_id = 4 [(validate.rules).message.required = true];
+
+  // Client/device information for session (stored in sessions table)
+  ClientInfo client_info = 5 [(validate.rules).message.required = true];
+}
+
+// Register a new user account
+message SignUpRequest {
+  // Primary identifier (email or phone)
+  string identifier = 1 [(validate.rules).string = {min_len: 1, max_len: 254}];
+
+  // Type of identifier
+  IdentifierType identifier_type = 2;
+
+  // Password (NIST: min 8 chars, check against breach databases)
+  string password = 3 [(validate.rules).string = {min_len: 8, max_len: 128}];
+
+  // Display name
+  string display_name = 4 [(validate.rules).string = {min_len: 1, max_len: 255}];
+
+  // Installation ID for immediate session
+  core.UUID installation_id = 5 [(validate.rules).message.required = true];
+
+  // Client info for session
+  ClientInfo client_info = 6 [(validate.rules).message.required = true];
+
+  // Locale (BCP 47, e.g., `en-US`)
+  string locale = 7 [(validate.rules).string = {max_len: 35}];
+
+  // Timezone (IANA, e.g., `America/New_York`)
+  string timezone = 8 [(validate.rules).string = {max_len: 64}];
+}
+
+// Authentication result
+// Returns tokens on success, or MFA challenge if second factor required
+message AuthResult {
+  // Status of authentication attempt
+  AuthStatus status = 1;
+
+  // Populated on AUTH_STATUS_SUCCESS
+  AuthInfo auth_info = 2;
+
+  // Populated on AUTH_STATUS_MFA_REQUIRED
+  MfaChallenge mfa_challenge = 3;
+
+  // Message for user (generic per OWASP - prevent enumeration)
+  string message = 4;
+
+  // Populated on AUTH_STATUS_LOCKED
+  LockoutInfo lockout_info = 5;
+}
+
+// Account lockout information
+message LockoutInfo {
+  // Seconds until account is unlocked
+  int32 retry_after_seconds = 1;
+
+  // Number of failed attempts
+  int32 failed_attempts = 2;
+
+  // Maximum attempts before lockout (configurable)
+  int32 max_attempts = 3;
+
+  // Lockout timestamp (Unix millis), 0 if not locked
+  int64 locked_until = 4;
+}
+
+// MFA challenge - returned when second factor is required
+message MfaChallenge {
+  // Token to correlate MFA verification with original auth attempt
+  string challenge_token = 1;
+
+  // Available MFA methods for this user
+  repeated MfaMethodInfo available_methods = 2;
+
+  // Challenge expiration (Unix millis) - typically 5 minutes
+  int64 expires_at = 3;
+}
+
+// Information about an available MFA method
+message MfaMethodInfo {
+  MfaMethod method = 1;
+
+  // Masked hint (e.g., "***-***-1234" for SMS, "john***@gm***.com" for email)
+  string hint = 2;
+
+  // True if this is the user's preferred/default method
+  bool is_default = 3;
+}
+
+// Verify MFA code to complete authentication
+message VerifyMfaRequest {
+  // Challenge token from MfaChallenge
+  string challenge_token = 1 [(validate.rules).string.min_len = 1];
+
+  // Method used for verification
+  MfaMethod method = 2;
+
+  // Verification code (6-digit TOTP, SMS code, recovery code, etc.)
+  string code = 3 [(validate.rules).string = {min_len: 6, max_len: 32}];
+
+  // Client info for session creation
+  ClientInfo client_info = 4;
+}
+
+// Full authentication info returned on successful auth
+message AuthInfo {
+  core.UUID user_id       = 1;
+  string    display_name  = 2;
+  UserRole  user_role     = 3;
+  string    refresh_token = 4;
+  string    access_token  = 5;
+
+  // User's email
+  string email = 6;
+
+  // User's phone (E.164 format)
+  string phone = 7;
+
+  // Email verification status
+  bool email_verified = 8;
+
+  // Phone verification status
+  bool phone_verified = 9;
+
+  // Whether MFA is enabled for this account
+  bool mfa_enabled = 10;
+
+  // Linked OAuth providers
+  repeated OAuthProvider linked_providers = 11;
+
+  // Account status
+  UserStatus status = 12;
 }
 
 // Client information sent with authentication requests
-// Note: user_agent is extracted server-side from HTTP headers (like ip_address)
 message ClientInfo {
-  string                 device_id      = 1 [(validate.rules).string = {max_len: 255}]; // Unique device/client identifier
-  string                 device_name    = 2 [(validate.rules).string = {max_len: 255}]; // Human-readable device name: "John's iPhone", "Work Laptop"
-  string                 device_type    = 3 [(validate.rules).string = {max_len: 50}]; // 'mobile', 'tablet', 'desktop', 'web', 'unknown'
-  string                 client_version = 4 [(validate.rules).string = {max_len: 100}]; // App/client version: "1.2.3", "2.0.0-beta"
-  google.protobuf.Struct metadata       = 5; // Additional client metadata (device_model, os_info, fingerprint, capabilities, etc.)
+  // Unique device/client identifier
+  string device_id = 1 [(validate.rules).string = {max_len: 255}];
+
+  // Human-readable device name
+  string device_name = 2 [(validate.rules).string = {max_len: 255}];
+
+  // Device type: 'mobile', 'tablet', 'desktop', 'web', 'unknown'
+  string device_type = 3 [(validate.rules).string = {max_len: 50}];
+
+  // App/client version
+  string client_version = 4 [(validate.rules).string = {max_len: 100}];
+
+  // Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+  google.protobuf.Struct metadata = 5;
 }
+
+// =============================================================================
+// EMAIL/PHONE VERIFICATION MESSAGES
+// =============================================================================
+// Uses DB: users.email_verified, users.phone_verified
+// Note: Verification tokens stored in separate verification_tokens table (to be added)
+
+message RequestVerificationRequest {
+  // Type of verification
+  VerificationType verification_type = 1;
+}
+
+message ConfirmVerificationRequest {
+  // Verification token from email/SMS
+  string token = 1 [(validate.rules).string.min_len = 1];
+
+  // Type of verification
+  VerificationType verification_type = 2;
+}
+
+// =============================================================================
+// OAUTH MESSAGES
+// =============================================================================
+
+// Get OAuth authorization URL
+message GetOAuthUrlRequest {
+  // OAuth provider
+  OAuthProvider provider = 1;
+
+  // Optional: redirect URI override
+  string redirect_uri = 2 [(validate.rules).string = {max_len: 2048}];
+
+  // Optional: additional scopes
+  repeated string scopes = 3;
+
+  // Optional: state data to preserve across OAuth flow
+  string state_data = 4 [(validate.rules).string = {max_len: 1024}];
+}
+
+// OAuth URL response
+message OAuthUrlReply {
+  // Authorization URL to redirect user
+  string authorization_url = 1;
+
+  // State parameter (for CSRF protection)
+  string state = 2;
+}
+
+// Exchange OAuth authorization code
+message ExchangeOAuthCodeRequest {
+  // Authorization code from OAuth callback
+  string code = 1 [(validate.rules).string.min_len = 1];
+
+  // State parameter from callback
+  string state = 2 [(validate.rules).string.min_len = 1];
+
+  // Installation ID
+  core.UUID installation_id = 3 [(validate.rules).message.required = true];
+
+  // Client info
+  ClientInfo client_info = 4 [(validate.rules).message.required = true];
+}
+
+// Link OAuth provider to existing account
+message LinkOAuthProviderRequest {
+  // Authorization code from OAuth callback
+  string code = 1 [(validate.rules).string.min_len = 1];
+
+  // State parameter
+  string state = 2 [(validate.rules).string.min_len = 1];
+}
+
+// Unlink OAuth provider
+message UnlinkOAuthProviderRequest {
+  OAuthProvider provider = 1;
+}
+
+// Linked OAuth providers response
+message LinkedProvidersReply {
+  repeated LinkedProvider providers = 1;
+}
+
+message LinkedProvider {
+  OAuthProvider provider         = 1;
+  string        provider_user_id = 2; // Provider's user ID
+  string        email            = 3; // Email from provider (if available)
+  int64         linked_at        = 4; // Link timestamp (Unix millis)
+}
+
+// =============================================================================
+// MFA MANAGEMENT MESSAGES
+// =============================================================================
+
+// MFA status for current user
+message MfaStatusReply {
+  // Whether MFA is enabled
+  bool enabled = 1;
+
+  // Configured MFA methods
+  repeated MfaMethodStatus methods = 2;
+
+  // Number of unused recovery codes remaining
+  int32 recovery_codes_remaining = 3;
+}
+
+// Status of a configured MFA method
+message MfaMethodStatus {
+  MfaMethod method  = 1;
+  bool      enabled = 2;
+
+  // Masked hint for this method
+  string hint = 3;
+
+  // When this method was configured (Unix millis)
+  int64 configured_at = 4;
+}
+
+// Request to set up MFA
+message SetupMfaRequest {
+  // Method to set up
+  MfaMethod method = 1;
+
+  // For SMS/Email: the phone/email to use (must be verified)
+  string identifier = 2 [(validate.rules).string = {max_len: 254}];
+}
+
+// MFA setup response
+message SetupMfaReply {
+  // For TOTP: base32-encoded secret
+  string secret = 1;
+
+  // For TOTP: otpauth:// URI for QR code generation
+  string provisioning_uri = 2;
+
+  // For SMS/Email: masked destination where code was sent
+  string masked_destination = 3;
+
+  // Setup token to correlate with `ConfirmMfaSetup`
+  string setup_token = 4;
+
+  // Setup expires at (Unix millis)
+  int64 expires_at = 5;
+}
+
+// Confirm MFA setup
+message ConfirmMfaSetupRequest {
+  // Setup token from `SetupMfaReply`
+  string setup_token = 1 [(validate.rules).string.min_len = 1];
+
+  // Verification code
+  string code = 2 [(validate.rules).string = {min_len: 6, max_len: 8}];
+}
+
+// MFA setup result
+message MfaSetupResult {
+  bool success = 1;
+
+  // Recovery codes (only returned on first MFA enrollment, display once!)
+  repeated string recovery_codes = 2;
+
+  // Error message if failed
+  string error_message = 3;
+}
+
+// Disable MFA request
+message DisableMfaRequest {
+  // Method to disable (or all if not specified)
+  MfaMethod method = 1;
+
+  // Current password for verification (OWASP: verify identity for sensitive ops)
+  string password = 2 [(validate.rules).string.min_len = 1];
+}
+
+// =============================================================================
+// ACCOUNT RECOVERY MESSAGES
+// =============================================================================
+// Uses DB: password_reset_tokens table
+
+// Start account recovery (password reset)
+// Always returns success to prevent user enumeration (OWASP)
+message RecoveryStartRequest {
+  // Email or phone number (used to look up account)
+  string identifier = 1 [(validate.rules).string = {min_len: 1, max_len: 254}];
+
+  // Identifier type (email or phone)
+  IdentifierType identifier_type = 2;
+}
+
+// Confirm recovery and set new password
+message RecoveryConfirmRequest {
+  // Recovery token from email/SMS
+  string token = 1 [(validate.rules).string.min_len = 1];
+
+  // New password (NIST: min 8 chars with MFA, min 15 without)
+  string new_password = 2 [(validate.rules).string = {min_len: 8, max_len: 128}];
+}
+
+// Change password (requires current password)
+message ChangePasswordRequest {
+  // Current password for verification
+  string current_password = 1 [(validate.rules).string.min_len = 1];
+
+  // New password
+  string new_password = 2 [(validate.rules).string = {min_len: 8, max_len: 128}];
+}
+
+// Set password (admin only - bypasses verification)
+message SetPasswordRequest {
+  // Target user ID (required)
+  core.UUID user_id = 1 [(validate.rules).message.required = true];
+
+  // New password
+  string password = 2 [(validate.rules).string = {min_len: 8, max_len: 128}];
+}
+
+// =============================================================================
+// TOKEN MESSAGES
+// =============================================================================
 
 message RefreshTokenRequest {
   string refresh_token = 1 [(validate.rules).string.min_len = 1];
@@ -81,54 +634,50 @@ message RefreshTokenReply {
   string access_token  = 2;
 }
 
-message AuthInfo {
-  core.UUID user_id       = 1;
-  string    user_name     = 2;
-  UserRole  user_role     = 3;
-  string    refresh_token = 4;
-  string    access_token  = 5;
-}
-
-enum UserRole {
-  ADMINISTRATOR = 0;
-  USER          = 1;
-}
-
-message UserInfo {
-  core.UUID id      = 1;
-  string    name    = 2;
-  string    email   = 3;
-  UserRole  role    = 4;
-  bool      deleted = 5;
-}
-
-message User {
-  core.UUID id      = 1;
-  string    name    = 2;
-  string    email   = 3;
-  UserRole  role    = 4;
-  bool      deleted = 5;
-}
-
 // =============================================================================
-// Session Management Messages
+// SESSION MANAGEMENT MESSAGES
 // =============================================================================
 
 // Session information returned to clients
 message SessionInfo {
-  string                 device_id      = 1; // Unique device identifier
-  string                 device_name    = 2; // Human-readable device name
-  string                 device_type    = 3; // 'mobile', 'tablet', 'desktop', 'web', 'unknown'
-  string                 client_version = 4; // App version
-  string                 ip_address     = 5; // Last seen IP address (may be masked for privacy)
-  string                 ip_country     = 6; // ISO 3166-1 alpha-2 country code
-  int64                  created_at     = 7; // Session creation timestamp (Unix millis)
-  int64                  last_seen_at   = 8; // Last activity timestamp (Unix millis)
-  int64                  expires_at     = 9; // Session expiration timestamp (Unix millis)
-  bool                   is_current     = 10; // True if this is the current session
-  string                 ip_created_by  = 11; // IP address at session creation
-  int32                  activity_count = 12; // Number of token refreshes (activity indicator)
-  google.protobuf.Struct metadata       = 13; // Session metadata (user agent, fingerprint, etc.)
+  // Unique device identifier
+  string device_id = 1;
+
+  // Human-readable device name
+  string device_name = 2;
+
+  // Device type: 'mobile', 'tablet', 'desktop', 'web', 'unknown'
+  string device_type = 3;
+
+  // App version
+  string client_version = 4;
+
+  // Last seen IP address (may be masked for privacy)
+  string ip_address = 5;
+
+  // ISO 3166-1 alpha-2 country code
+  string ip_country = 6;
+
+  // Session creation timestamp (Unix millis)
+  int64 created_at = 7;
+
+  // Last activity timestamp (Unix millis)
+  int64 last_seen_at = 8;
+
+  // Session expiration timestamp (Unix millis)
+  int64 expires_at = 9;
+
+  // True if this is the current session
+  bool is_current = 10;
+
+  // IP address at session creation
+  string ip_created_by = 11;
+
+  // Number of token refreshes (activity indicator)
+  int32 activity_count = 12;
+
+  // Session metadata (user agent, fingerprint, etc.)
+  google.protobuf.Struct metadata = 13;
 }
 
 // Response for listing sessions
@@ -136,15 +685,139 @@ message ListSessionsReply {
   repeated SessionInfo sessions = 1;
 }
 
-// Request to revoke a specific session by device_id
+// Request to revoke a specific session by `device_id`
 message RevokeSessionRequest {
   string device_id = 1 [(validate.rules).string = {min_len: 1, max_len: 255}];
 }
 
 // Response for revoking multiple sessions
 message RevokeSessionsReply {
-  int32 revoked_count = 1; // Number of sessions revoked
+  // Number of sessions revoked
+  int32 revoked_count = 1;
 }
+
+// =============================================================================
+// USER MANAGEMENT MESSAGES
+// =============================================================================
+
+message LoadUsersInfoRequest {
+  // Impersonated user id (admin only)
+  core.UUID user_id = 1;
+
+  // Optional: filter by specific user IDs; if empty, load all users
+  repeated core.UUID user_ids = 2;
+
+  // Optional: filter by status
+  repeated string statuses = 3;
+}
+
+// User info for listings
+message UserInfo {
+  core.UUID id      = 1;
+  string    name    = 2;
+  string    email   = 3;
+  UserRole  role    = 4;
+  bool      deleted = 5;
+
+  // Phone number (if set)
+  string phone = 6;
+
+  // Email verified status
+  bool email_verified = 7;
+
+  // Phone verified status
+  bool phone_verified = 8;
+
+  // MFA enabled
+  bool mfa_enabled = 9;
+
+  // Account status
+  UserStatus status = 10;
+
+  // Linked OAuth providers
+  repeated OAuthProvider linked_providers = 11;
+}
+
+// User details
+message User {
+  core.UUID id      = 1;
+  string    name    = 2;
+  string    email   = 3;
+  UserRole  role    = 4;
+  bool      deleted = 5;
+
+  // Phone number
+  string phone = 6;
+
+  // Account status
+  string status = 7;
+
+  // Created timestamp
+  int64 created_at = 8;
+
+  // Updated timestamp
+  int64 updated_at = 9;
+}
+
+message UserId {
+  core.UUID id = 1 [(validate.rules).message.required = true];
+}
+
+// Create user request
+message CreateUserRequest {
+  core.UUID id = 1 [(validate.rules).message.required = true];
+
+  // Display name
+  string name = 2 [(validate.rules).string = {min_len: 1, max_len: 255}];
+
+  // Email (optional if phone is provided)
+  string email = 3 [(validate.rules).string = {max_len: 254}];
+
+  // Phone in E.164 format (optional if email is provided)
+  string phone = 4 [(validate.rules).string = {max_len: 16}];
+
+  // Password (optional for OAuth-only accounts)
+  string password = 5 [(validate.rules).string = {max_len: 128}];
+
+  // User role
+  UserRole role = 6;
+
+  // Soft-deleted flag
+  bool deleted = 7;
+
+  // Locale (BCP 47)
+  string locale = 8;
+
+  // Timezone (IANA)
+  string timezone = 9;
+}
+
+// Update user request
+message UpdateUserRequest {
+  core.UUID id = 1 [(validate.rules).message.required = true];
+
+  // Display name
+  string name = 2 [(validate.rules).string = {min_len: 1, max_len: 255}];
+
+  // Email
+  string email = 3 [(validate.rules).string = {max_len: 254}];
+
+  // Phone
+  string phone = 4 [(validate.rules).string = {max_len: 16}];
+
+  // User role
+  UserRole role = 5;
+
+  // Soft-deleted flag
+  bool deleted = 6;
+
+  // Account status (admin only)
+  string status = 7;
+}
+
+// =============================================================================
+// AVATAR MESSAGES
+// =============================================================================
 
 // Request for presigned upload URL
 message GetAvatarUploadUrlRequest {
@@ -155,32 +828,14 @@ message GetAvatarUploadUrlRequest {
 
 // Response with presigned URL for direct S3 upload
 message AvatarUploadUrl {
-  string upload_url = 1; // Presigned PUT URL for S3
-  uint64 expires_in = 2; // URL expiration in seconds
+  // Presigned PUT URL for S3
+  string upload_url = 1;
+
+  // URL expiration in seconds
+  uint64 expires_in = 2;
 }
 
 // Confirm avatar upload completed
 message ConfirmAvatarUploadRequest {
   core.UUID user_id = 1 [(validate.rules).message.required = true];
-}
-
-message UserId {
-  core.UUID id = 1 [(validate.rules).message.required = true];
-}
-
-message CreateUserRequest {
-  core.UUID id       = 1 [(validate.rules).message.required = true];
-  string    name     = 2 [(validate.rules).string = {min_len: 1, max_len: 255}];
-  string    email    = 3 [(validate.rules).string.email = true];
-  string    password = 4 [(validate.rules).string.min_len = 5];
-  UserRole  role     = 5;
-  bool      deleted  = 6;
-}
-
-message UpdateUserRequest {
-  core.UUID id      = 1 [(validate.rules).message.required = true];
-  string    name    = 2 [(validate.rules).string = {min_len: 1, max_len: 255}];
-  string    email   = 3 [(validate.rules).string.email = true];
-  UserRole  role    = 4;
-  bool      deleted = 5;
 }

@@ -1,9 +1,17 @@
 //! REST routes and health check handlers.
 
+use auth_core::TokenGenerator;
 use auth_telemetry::PrometheusHandle;
-use axum::{Json, Router, extract::State, routing::get};
-use serde::Serialize;
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    response::Redirect,
+    routing::get,
+};
+use serde::{Deserialize, Serialize};
+use tracing::{error, info, warn};
 
+use crate::core::error_codes;
 use crate::startup::AppState;
 
 /// Health check response.
@@ -37,16 +45,23 @@ impl CheckResult {
         }
     }
 
-    fn unhealthy(message: impl Into<String>) -> Self {
+    fn unhealthy(message: &str) -> Self {
         Self {
             status: "unhealthy",
-            message: Some(message.into()),
+            message: Some(message.to_string()),
         }
     }
 }
 
 /// Build version.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Query parameters for email verification.
+#[derive(Debug, Deserialize)]
+pub struct VerifyEmailQuery {
+    /// The verification token from the email link.
+    pub token: String,
+}
 
 /// Build REST routes with the given application state.
 pub fn rest_routes(state: AppState) -> Router {
@@ -55,6 +70,7 @@ pub fn rest_routes(state: AppState) -> Router {
         .route("/health", get(|| async { "OK" }))
         .route("/health/live", get(|| async { "OK" }))
         .route("/health/ready", get(readiness_handler))
+        .route("/verify-email", get(verify_email_handler))
         .with_state(state)
 }
 
@@ -87,9 +103,7 @@ async fn readiness_handler(State(state): State<AppState>) -> Json<HealthResponse
     };
 
     let healthy = db_check.status == "healthy"
-        && storage_check
-            .as_ref()
-            .map_or(true, |s| s.status == "healthy");
+        && storage_check.as_ref().is_none_or(|s| s.status == "healthy");
 
     Json(HealthResponse {
         status: if healthy { "healthy" } else { "unhealthy" },
@@ -99,4 +113,54 @@ async fn readiness_handler(State(state): State<AppState>) -> Json<HealthResponse
             storage: storage_check,
         }),
     })
+}
+
+/// Handle email verification link clicks.
+///
+/// Flow: Email link → Backend /verify-email?token=xxx → 302 redirect → Frontend success page.
+///
+/// - On success: Marks email as verified, redirects to success page
+/// - On failure: Redirects to error page with error code
+async fn verify_email_handler(
+    State(state): State<AppState>,
+    Query(query): Query<VerifyEmailQuery>,
+) -> Redirect {
+    let urls = &state.urls;
+
+    // Decode the URL-encoded token
+    let token = match urlencoding::decode(&query.token) {
+        Ok(t) => t.into_owned(),
+        Err(e) => {
+            warn!(error = %e, "Invalid token encoding");
+            return Redirect::to(&urls.email_verified_error(error_codes::INVALID_TOKEN));
+        }
+    };
+
+    // Hash the token to look up in database
+    let token_hash = TokenGenerator::hash_token(&token);
+
+    // Consume the token (validates and marks as used atomically)
+    let user_id = match state
+        .db
+        .email_verifications
+        .consume_token(&token_hash)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            warn!(error = %e, "Invalid or expired email verification token");
+            return Redirect::to(&urls.email_verified_error(error_codes::EXPIRED_TOKEN));
+        }
+    };
+
+    // Mark user email as verified
+    if let Err(e) = state.db.users.set_email_verified(user_id).await {
+        error!(user_id = %user_id, error = %e, "Failed to set email verified");
+        return Redirect::to(&urls.email_verified_error(error_codes::INTERNAL_ERROR));
+    }
+
+    info!(user_id = %user_id, "Email verified successfully");
+
+    // Redirect to frontend success page
+    Redirect::to(&urls.email_verified_success())
 }

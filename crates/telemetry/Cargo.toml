@@ -1,8 +1,8 @@
 [package]
 name = "auth-telemetry"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
 description = "Observability stack: OpenTelemetry tracing, Prometheus metrics, and Sentry error tracking"
 
 [features]
@@ -29,9 +29,5 @@ metrics-exporter-prometheus = { version = "0.18", optional = true }
 sentry = { version = "0.46", default-features = false, features = ["backtrace", "contexts", "panic", "rustls", "tracing"], optional = true }
 sentry-tracing = { version = "0.46", optional = true }
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = "warn"
-pedantic = "warn"
+[lints]
+workspace = true

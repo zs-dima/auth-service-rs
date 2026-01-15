@@ -17,11 +17,12 @@ const IP_HEADERS: &[&str] = &[
 ];
 
 /// Client IP address extracted from request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ClientIp(pub Option<IpAddr>);
 
 impl ClientIp {
     /// Extract client IP from request headers or connection info.
+    #[must_use]
     pub fn from_request<T>(req: &Request<T>) -> Self {
         Self(extract_client_ip(req))
     }
@@ -29,7 +30,7 @@ impl ClientIp {
     /// Get the IP address if available.
     #[inline]
     #[must_use]
-    pub fn ip(&self) -> Option<IpAddr> {
+    pub const fn ip(&self) -> Option<IpAddr> {
         self.0
     }
 }
@@ -38,15 +39,16 @@ impl ClientIp {
 fn extract_client_ip<T>(req: &Request<T>) -> Option<IpAddr> {
     // First, try proxy headers (in case we're behind a reverse proxy)
     for header in IP_HEADERS {
-        if let Some(value) = req.headers().get(*header) {
-            if let Ok(s) = value.to_str() {
-                // X-Forwarded-For may contain multiple IPs: "client, proxy1, proxy2"
-                // Take the first (original client) IP
-                let ip_str = s.split(',').next()?.trim();
-                if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                    return Some(ip);
-                }
-            }
+        let ip = req
+            .headers()
+            .get(*header)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(str::trim)
+            .and_then(|ip_str| ip_str.parse::<IpAddr>().ok());
+
+        if ip.is_some() {
+            return ip;
         }
     }
 

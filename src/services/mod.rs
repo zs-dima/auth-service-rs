@@ -2,4 +2,4 @@
 
 pub mod auth;
 
-pub use auth::AuthServiceImpl;
+pub use auth::{AuthServiceConfig, AuthServiceImpl};

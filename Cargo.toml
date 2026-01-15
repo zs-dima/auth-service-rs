@@ -4,7 +4,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.92"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -30,6 +30,7 @@ path = "src/main.rs"
 auth-core = { path = "crates/core" }
 auth-db = { path = "crates/db" }
 auth-email = { path = "crates/email" }
+auth-mailjet = { path = "crates/mailjet" }
 auth-proto = { path = "crates/proto" }
 auth-storage = { path = "crates/storage" }
 auth-telemetry = { path = "crates/telemetry" }
@@ -48,7 +49,7 @@ tonic-reflection = "0.14"
 tower = { version = "0.5", features = ["util", "timeout"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
 http = "1.4"
-axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1", "http2"] }
+axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1", "http2", "query"] }
 
 # Static hash sets (compile-time perfect hash)
 phf = { version = "0.13", features = ["macros"] }
@@ -56,10 +57,10 @@ phf = { version = "0.13", features = ["macros"] }
 # Authentication
 argon2 = "0.5"
 secrecy = { version = "0.10", features = ["serde"] }
-sha2 = "0.10"
 
 # Streaming
 async-stream = "0.3"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 # Utilities
 uuid = { version = "1.16", features = ["v4", "serde"] }

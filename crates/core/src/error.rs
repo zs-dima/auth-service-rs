@@ -45,7 +45,14 @@ impl AppError {
         Self::NotFound(format!("{entity} not found: {id}"))
     }
 
+    /// Create an error for invalid or expired tokens.
+    #[must_use]
+    pub fn token_invalid(token_type: &str) -> Self {
+        Self::NotFound(format!("Invalid or expired {token_type}"))
+    }
+
     /// Create a conflict error for duplicate data.
+    #[must_use]
     pub fn conflict(entity: &str, field: &str) -> Self {
         Self::Conflict(format!("{entity} with this {field} already exists"))
     }
@@ -71,6 +78,9 @@ impl From<AppError> for Status {
 /// Extension trait for converting errors to Status with logging.
 pub trait StatusExt<T> {
     /// Convert error to internal Status with logging.
+    ///
+    /// # Errors
+    /// Returns `Status::internal` with the provided message.
     fn status(self, msg: &'static str) -> Result<T, Status>;
 }
 
@@ -85,7 +95,10 @@ impl<T, E: Display> StatusExt<T> for Result<T, E> {
 
 /// Extension trait for Option types.
 pub trait OptionStatusExt<T> {
-    /// Convert None to not_found Status.
+    /// Convert `None` to `not_found` Status.
+    ///
+    /// # Errors
+    /// Returns `Status::not_found` if the option is `None`.
     fn ok_or_not_found(self, msg: &'static str) -> Result<T, Status>;
 }
 

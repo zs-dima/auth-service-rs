@@ -1,53 +1,93 @@
 //! Auth service gRPC implementation.
 
 use std::net::IpAddr;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use async_stream::try_stream;
 use auth_core::{
-    AppError, OptionStatusExt, StatusExt, UuidExt, ValidateExt, json_to_proto_struct,
-    proto_struct_to_json,
+    AppError, OptionStatusExt, OptionStrExt, RequestAuthExt, StatusExt, StrExt, ToProtoUuid,
+    UuidExt, ValidateExt, json_to_proto_struct, proto_struct_to_json,
 };
 use auth_db::{
-    CreatePasswordResetTokenParams, CreateSessionParams, CreateUserWithProfileParams, Database,
-    UpdateUserParams, UpdateUserProfileParams, UserStatus, UserWithProfile, proto_to_role,
+    CreateEmailVerificationTokenParams, CreatePasswordResetTokenParams, CreateSessionParams,
+    CreateUserWithProfileParams, Database, UpdateUserParams, UpdateUserProfileParams, UserStatus,
+    UserWithProfile, proto_to_role,
 };
-use auth_email::EmailService;
 use auth_proto::auth::auth_service_server::AuthService;
 use auth_proto::auth::{
-    AuthInfo, AvatarUploadUrl, ConfirmAvatarUploadRequest, CreateUserRequest,
-    GetAvatarUploadUrlRequest, ListSessionsReply, LoadUsersInfoRequest, RefreshTokenReply,
-    RefreshTokenRequest, ResetPasswordRequest, RevokeSessionRequest, RevokeSessionsReply,
-    SessionInfo as ProtoSessionInfo, SetPasswordRequest, SignInRequest, UpdateUserRequest,
-    User as ProtoUser, UserId, UserInfo as ProtoUserInfo,
+    // Authentication
+    AuthInfo,
+    AuthResult,
+    AuthStatus,
+    AuthenticateRequest,
+    // User management
+    AvatarUploadUrl,
+    ChangePasswordRequest,
+    ConfirmAvatarUploadRequest,
+    ConfirmMfaSetupRequest,
+    ConfirmVerificationRequest,
+    CreateUserRequest,
+    DisableMfaRequest,
+    ExchangeOAuthCodeRequest,
+    GetAvatarUploadUrlRequest,
+    GetOAuthUrlRequest,
+    IdentifierType,
+    LinkOAuthProviderRequest,
+    LinkedProvidersReply,
+    // Tokens & Sessions
+    ListSessionsReply,
+    LoadUsersInfoRequest,
+    MfaSetupResult,
+    MfaStatusReply,
+    OAuthUrlReply,
+    RecoveryConfirmRequest,
+    RecoveryStartRequest,
+    RefreshTokenReply,
+    RefreshTokenRequest,
+    RequestVerificationRequest,
+    RevokeSessionRequest,
+    RevokeSessionsReply,
+    SessionInfo as ProtoSessionInfo,
+    SetPasswordRequest,
+    SetupMfaReply,
+    SetupMfaRequest,
+    SignUpRequest,
+    UnlinkOAuthProviderRequest,
+    UpdateUserRequest,
+    User as ProtoUser,
+    UserId,
+    UserInfo as ProtoUserInfo,
+    VerifyMfaRequest,
 };
 use auth_proto::core::ResultReply;
 use auth_storage::S3Storage;
 use chrono::Utc;
+use futures::stream::BoxStream;
 use ipnetwork::IpNetwork;
-use sha2::{Digest, Sha256};
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::core::{
-    AuthInfo as CoreAuthInfo, Encryptor, GeolocationService, JwtValidator, TokenGenerator,
-};
+use crate::core::{Encryptor, GeolocationService, JwtValidator, TokenGenerator, UrlBuilder};
 use crate::middleware::ClientIp;
+use crate::startup::EmailProvider;
 
 /// Upload URL expiration (5 minutes).
 const UPLOAD_URL_EXPIRES_SECS: u64 = 300;
 
-/// Session tokens.
+/// Maximum length for user-agent string to prevent storage bloat.
+const MAX_USER_AGENT_LEN: usize = 500;
+
+/// Session tokens returned after successful authentication.
+#[derive(Debug)]
 struct SessionTokens {
     access_token: String,
     refresh_token: String,
 }
 
 /// Client context extracted from request for session creation.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct ClientContext {
     ip_address: Option<IpAddr>,
     ip_country: Option<String>,
@@ -59,56 +99,113 @@ struct ClientContext {
     metadata: Option<serde_json::Value>,
 }
 
-/// Hash a token with SHA-256 for storage.
-fn hash_token(token: &str) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    hasher.finalize().to_vec()
-}
-
-fn require_auth<T>(req: &Request<T>) -> Result<CoreAuthInfo, Status> {
-    req.extensions()
-        .get::<CoreAuthInfo>()
-        .cloned()
-        .ok_or_else(|| Status::unauthenticated("Authentication required"))
-}
-
-fn require_admin<T>(req: &Request<T>) -> Result<CoreAuthInfo, Status> {
-    let auth = require_auth(req)?;
-    if !auth.is_admin() {
-        return Err(Status::permission_denied("Admin access required"));
+impl ClientContext {
+    fn with_ip(&mut self, ip: Option<IpAddr>) -> &mut Self {
+        self.ip_address = ip;
+        self
     }
-    Ok(auth)
+
+    fn with_country(&mut self, country: Option<String>) -> &mut Self {
+        self.ip_country = country;
+        self
+    }
+
+    fn with_user_agent(&mut self, ua: Option<String>) -> &mut Self {
+        self.user_agent = ua;
+        self
+    }
+
+    fn with_device_id(&mut self, id: impl Into<String>) -> &mut Self {
+        self.device_id = Some(id.into());
+        self
+    }
+
+    fn with_device_name(&mut self, name: Option<String>) -> &mut Self {
+        self.device_name = name;
+        self
+    }
+
+    fn with_device_type(&mut self, dtype: Option<String>) -> &mut Self {
+        self.device_type = dtype;
+        self
+    }
+
+    fn with_client_version(&mut self, version: Option<String>) -> &mut Self {
+        self.client_version = version;
+        self
+    }
+
+    fn with_metadata(&mut self, metadata: Option<serde_json::Value>) -> &mut Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// Convert IP address to network for storage.
+    fn ip_network(&self) -> Option<IpNetwork> {
+        self.ip_address.map(IpNetwork::from)
+    }
+
+    /// Convert to `CreateSessionParams` for database insertion.
+    fn to_session_params<'a>(
+        &'a self,
+        id_user: Uuid,
+        refresh_token_hash: &'a [u8],
+        expires_at: chrono::DateTime<Utc>,
+        metadata: serde_json::Value,
+    ) -> CreateSessionParams<'a> {
+        CreateSessionParams {
+            id_user,
+            refresh_token_hash,
+            expires_at,
+            device_id: self.device_id.as_deref(),
+            device_name: self.device_name.as_deref(),
+            device_type: self.device_type.as_deref(),
+            client_version: self.client_version.as_deref(),
+            ip_address: self.ip_network(),
+            ip_country: self.ip_country.as_deref(),
+            metadata,
+        }
+    }
+}
+
+/// Configuration for auth service token TTLs and domain.
+#[derive(Clone)]
+pub struct AuthServiceConfig {
+    /// JWT validator for token operations.
+    pub jwt_validator: JwtValidator,
+    /// Access token time-to-live in minutes.
+    pub access_token_ttl_minutes: u64,
+    /// Refresh token time-to-live in days.
+    pub refresh_token_ttl_days: i64,
+    /// Password reset token TTL in minutes.
+    pub password_reset_ttl_minutes: u32,
+    /// Email verification token TTL in hours.
+    pub email_verification_ttl_hours: u32,
+    /// URL builder for frontend links.
+    pub urls: UrlBuilder,
 }
 
 /// Auth service implementation.
 pub struct AuthServiceImpl {
-    jwt_validator: JwtValidator,
-    access_token_ttl_minutes: u64,
-    refresh_token_ttl_days: i64,
-    password_reset_ttl_minutes: u32,
+    config: AuthServiceConfig,
     db: Database,
     s3: Option<Arc<S3Storage>>,
-    email: Option<Arc<EmailService>>,
+    email: Option<EmailProvider>,
     geolocation: GeolocationService,
 }
 
 impl AuthServiceImpl {
+    /// Create a new auth service instance.
+    #[must_use]
     pub fn new(
-        jwt_validator: JwtValidator,
-        access_token_ttl_minutes: u64,
-        refresh_token_ttl_days: i64,
-        password_reset_ttl_minutes: u32,
+        config: AuthServiceConfig,
         db: Database,
         s3: Option<Arc<S3Storage>>,
-        email: Option<Arc<EmailService>>,
+        email: Option<EmailProvider>,
         geolocation: GeolocationService,
     ) -> Self {
         Self {
-            jwt_validator,
-            access_token_ttl_minutes,
-            refresh_token_ttl_days,
-            password_reset_ttl_minutes,
+            config,
             db,
             s3,
             email,
@@ -116,8 +213,60 @@ impl AuthServiceImpl {
         }
     }
 
+    /// Normalize email to lowercase for case-insensitive comparison.
+    #[must_use]
     fn canonical_email(email: &str) -> String {
         email.trim().to_lowercase()
+    }
+
+    /// Normalize phone number to E.164 format (if valid).
+    ///
+    /// E.164 format: +[country code][subscriber number], max 15 digits.
+    /// Returns normalized phone or original if invalid.
+    #[must_use]
+    fn canonical_phone(phone: &str) -> String {
+        let trimmed = phone.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+
+        let has_plus = trimmed.starts_with('+');
+        let digits: String = trimmed.chars().filter(char::is_ascii_digit).collect();
+
+        // E.164: 7-15 digits (including country code)
+        if digits.len() < 7 || digits.len() > 15 {
+            // Return as-is if invalid length (validation should catch this)
+            return trimmed.to_string();
+        }
+
+        if has_plus {
+            format!("+{digits}")
+        } else {
+            digits
+        }
+    }
+
+    /// Detect identifier type from format:
+    /// - Starts with `+` → Phone (E.164)
+    /// - Otherwise → Email (fallback)
+    #[must_use]
+    fn detect_identifier_type(identifier: &str) -> IdentifierType {
+        let trimmed = identifier.trim_start();
+        if trimmed.starts_with('+') {
+            IdentifierType::Phone
+        } else {
+            // Default to email for legacy compatibility
+            IdentifierType::Email
+        }
+    }
+
+    /// Normalize identifier based on type.
+    #[must_use]
+    fn normalize_identifier(identifier: &str, id_type: IdentifierType) -> String {
+        match id_type {
+            IdentifierType::Phone => Self::canonical_phone(identifier),
+            _ => Self::canonical_email(identifier),
+        }
     }
 
     /// Extract client context from request (IP address, geolocation, user-agent).
@@ -135,14 +284,13 @@ impl AuthServiceImpl {
             .metadata()
             .get("user-agent")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.chars().take(500).collect());
+            .map(|s| s.chars().take(MAX_USER_AGENT_LEN).collect::<String>());
 
-        ClientContext {
-            ip_address,
-            ip_country,
-            user_agent,
-            ..Default::default()
-        }
+        let mut ctx = ClientContext::default();
+        ctx.with_ip(ip_address)
+            .with_country(ip_country)
+            .with_user_agent(user_agent);
+        ctx
     }
 
     /// Build full client context from request and client info.
@@ -154,30 +302,12 @@ impl AuthServiceImpl {
         let mut ctx = self.extract_client_context(req);
 
         if let Some(info) = client_info {
-            ctx.device_id = if info.device_id.is_empty() {
-                None
-            } else {
-                Some(info.device_id.clone())
-            };
-            // Use device_name from client directly; fallback to "Unknown device"
-            ctx.device_name = if info.device_name.is_empty() {
-                None
-            } else {
-                Some(info.device_name.clone())
-            };
-            ctx.device_type = if info.device_type.is_empty() {
-                None
-            } else {
-                Some(info.device_type.clone())
-            };
-            ctx.client_version = if info.client_version.is_empty() {
-                None
-            } else {
-                Some(info.client_version.clone())
-            };
-            ctx.metadata = info.metadata.as_ref().map(proto_struct_to_json);
+            ctx.with_device_id(info.device_id.to_opt().unwrap_or_default())
+                .with_device_name(info.device_name.to_opt())
+                .with_device_type(info.device_type.to_opt())
+                .with_client_version(info.client_version.to_opt())
+                .with_metadata(info.metadata.as_ref().map(proto_struct_to_json));
         }
-
         ctx
     }
 
@@ -190,60 +320,48 @@ impl AuthServiceImpl {
     ) -> Result<SessionTokens, Status> {
         let device_id = ctx
             .device_id
-            .as_deref()
+            .as_ref()
             .ok_or_else(|| Status::invalid_argument("Missing device_id"))?;
 
         let access_token = self
+            .config
             .jwt_validator
             .generate_access_token(
                 user,
                 device_id,
                 installation_id,
-                self.access_token_ttl_minutes,
+                self.config.access_token_ttl_minutes,
             )
             .status("Failed to generate access token")?;
 
         let (refresh_token, expires_at) =
-            TokenGenerator::generate_refresh_token(self.refresh_token_ttl_days)
+            TokenGenerator::generate_refresh_token(self.config.refresh_token_ttl_days)
                 .status("Failed to generate refresh token")?;
-
-        let refresh_token_hash = hash_token(&refresh_token);
-
-        // Convert IP address to IpNetwork for storage
-        let ip_network = ctx.ip_address.map(IpNetwork::from);
 
         // Build metadata JSON with user_agent and any additional client metadata
         let metadata = {
-            let mut map = serde_json::Map::new();
+            let mut map = ctx
+                .metadata
+                .as_ref()
+                .and_then(serde_json::Value::as_object)
+                .map_or_else(serde_json::Map::new, Clone::clone);
+
             if let Some(ua) = &ctx.user_agent {
-                map.insert(
-                    "user_agent".to_string(),
-                    serde_json::Value::String(ua.clone()),
-                );
-            }
-            // Merge any additional client metadata
-            if let Some(serde_json::Value::Object(extra)) = &ctx.metadata {
-                for (k, v) in extra {
-                    map.insert(k.clone(), v.clone());
-                }
+                map.insert("user_agent".to_string(), ua.clone().into());
             }
             serde_json::Value::Object(map)
         };
 
+        let refresh_token_hash = TokenGenerator::hash_token(&refresh_token);
+
         self.db
             .sessions
-            .create_session(CreateSessionParams {
-                id_user: user.id,
-                refresh_token_hash: refresh_token_hash.clone(),
+            .create_session(ctx.to_session_params(
+                user.id,
+                &refresh_token_hash,
                 expires_at,
-                device_id: Some(device_id.to_string()),
-                device_name: ctx.device_name.clone(),
-                device_type: ctx.device_type.clone(),
-                client_version: ctx.client_version.clone(),
-                ip_address: ip_network,
-                ip_country: ctx.ip_country.clone(),
                 metadata,
-            })
+            ))
             .await
             .status("Failed to save session")?;
 
@@ -253,10 +371,12 @@ impl AuthServiceImpl {
         })
     }
 
+    #[inline]
     fn hash_password(password: &str) -> Result<String, Status> {
         Encryptor::hash(password).status("Failed to hash password")
     }
 
+    #[inline]
     fn require_s3(&self) -> Result<&Arc<S3Storage>, Status> {
         self.s3.as_ref().ok_or_else(|| {
             error!("S3 not configured");
@@ -273,15 +393,120 @@ impl AuthServiceImpl {
         }
         Ok(())
     }
+
+    /// Create a standardized failed authentication response.
+    /// Uses generic message to prevent user enumeration (OWASP).
+    #[must_use]
+    #[inline]
+    fn failed_auth() -> AuthResult {
+        AuthResult {
+            status: AuthStatus::Failed.into(),
+            auth_info: None,
+            mfa_challenge: None,
+            message: String::new(),
+            lockout_info: None,
+        }
+    }
+
+    /// Build successful authentication result with tokens.
+    #[must_use]
+    fn build_success_auth_result(user: &UserWithProfile, tokens: SessionTokens) -> AuthResult {
+        AuthResult {
+            status: AuthStatus::Success.into(),
+            auth_info: Some(AuthInfo {
+                user_id: Some(user.id.to_proto()),
+                display_name: user.display_name.clone(),
+                user_role: auth_db::role_to_proto(&user.role),
+                refresh_token: tokens.refresh_token,
+                access_token: tokens.access_token,
+                email: user.email.clone().unwrap_or_default(),
+                phone: user.phone.clone().unwrap_or_default(),
+                email_verified: user.email_verified,
+                phone_verified: user.phone_verified,
+                mfa_enabled: false, // TODO: Check MFA status when implemented
+                linked_providers: vec![], // TODO: Load from providers table
+                status: auth_db::status_to_proto(user.status),
+            }),
+            mfa_challenge: None,
+            message: String::new(),
+            lockout_info: None,
+        }
+    }
+
+    /// Spawn async task to send welcome email with verification link.
+    ///
+    /// Fire-and-forget: errors are logged but don't fail the parent operation.
+    fn spawn_welcome_email(
+        &self,
+        user_id: Uuid,
+        email: String,
+        display_name: String,
+        temp_password: Option<String>,
+    ) {
+        let Some(email_service) = self.email.clone() else {
+            return;
+        };
+
+        let db = self.db.clone();
+        let urls = self.config.urls.clone();
+        let ttl_hours = self.config.email_verification_ttl_hours;
+
+        tokio::spawn(async move {
+            // Generate verification token
+            let token = TokenGenerator::generate_secure_token();
+            let token_hash = TokenGenerator::hash_token(&token);
+            let expires_at = Utc::now() + chrono::Duration::hours(i64::from(ttl_hours));
+
+            // Store token hash in database
+            if let Err(e) = db
+                .email_verifications
+                .create_token(CreateEmailVerificationTokenParams {
+                    id_user: user_id,
+                    token_hash: &token_hash,
+                    expires_at,
+                })
+                .await
+            {
+                error!(user_id = %user_id, error = %e, "Failed to create email verification token");
+                return;
+            }
+
+            // Build URLs
+            let verification_url = urls.verify_email(&token);
+            let login_url = urls.sign_in();
+
+            // Send welcome email
+            if let Err(e) = email_service
+                .send_welcome(
+                    &email,
+                    &display_name,
+                    &login_url,
+                    temp_password.as_deref(),
+                    Some(&verification_url),
+                )
+                .await
+            {
+                error!(user_id = %user_id, error = %e, "Failed to send welcome email");
+                return;
+            }
+
+            info!(user_id = %user_id, "Welcome email sent with verification link");
+        });
+    }
 }
 
-type StreamResult<T> = Pin<Box<dyn tokio_stream::Stream<Item = Result<T, Status>> + Send>>;
+/// Streaming result type for gRPC responses.
+type StreamResult<T> = BoxStream<'static, Result<T, Status>>;
 
 #[tonic::async_trait]
 impl AuthService for AuthServiceImpl {
-    /// Sign in with email and password.
-    #[instrument(skip(self, request), fields(email))]
-    async fn sign_in(&self, request: Request<SignInRequest>) -> Result<Response<AuthInfo>, Status> {
+    /// Authenticate with identifier (email or phone) and password.
+    /// Returns `AuthResult` with tokens on success, or error status.
+    #[instrument(skip(self, request), fields(identifier))]
+    async fn authenticate(
+        &self,
+        request: Request<AuthenticateRequest>,
+    ) -> Result<Response<AuthResult>, Status> {
         // Extract client context before consuming request
         let client_ctx =
             self.build_client_context(&request, request.get_ref().client_info.as_ref());
@@ -289,34 +514,50 @@ impl AuthService for AuthServiceImpl {
         let req = request.into_inner();
         req.validate_or_status()?;
 
-        let email = Self::canonical_email(&req.email);
-        tracing::Span::current().record("email", &email);
-        info!(email = %email, "Sign in attempt");
+        // Detect identifier type if not specified
+        let id_type = if req.identifier_type == IdentifierType::Unspecified as i32 {
+            Self::detect_identifier_type(&req.identifier)
+        } else {
+            IdentifierType::try_from(req.identifier_type).unwrap_or(IdentifierType::Email)
+        };
+
+        let identifier = Self::normalize_identifier(&req.identifier, id_type);
+        tracing::Span::current().record("identifier", &identifier);
+        info!(identifier = %identifier, id_type = ?id_type, "Authentication attempt");
 
         let installation_id = req
             .installation_id
             .as_ref()
             .parse_or_status_with_field("installation_id")?;
 
-        let user = self
-            .db
-            .users
-            .get_active_user_by_email(&email)
-            .await
-            .map_err(|e| {
-                warn!(email = %email, error = %e, "User not found");
-                Status::unauthenticated("Invalid credentials")
-            })?;
+        // Lookup user by identifier type
+        let user_result = match id_type {
+            IdentifierType::Phone => self.db.users.get_active_user_by_phone(&identifier).await,
+            _ => self.db.users.get_active_user_by_email(&identifier).await,
+        };
 
-        let password = user.password.as_deref().ok_or_else(|| {
-            warn!(email = %email, "User has no password (OAuth-only account)");
-            Status::unauthenticated("Invalid credentials")
-        })?;
+        let Ok(user) = user_result else {
+            warn!(identifier = %identifier, "User not found");
+            // Generic error to prevent enumeration (OWASP)
+            return Ok(Response::new(Self::failed_auth()));
+        };
+
+        // Check for account lockout (future: implement via failed_attempts tracking)
+        // TODO: Add lockout_info when DB supports failed_attempts column
+
+        let Some(password) = user.password.as_deref() else {
+            warn!(identifier = %identifier, "User has no password (OAuth-only account)");
+            return Ok(Response::new(Self::failed_auth()));
+        };
 
         if !Encryptor::verify(&req.password, password) {
-            warn!(email = %email, "Invalid password");
-            return Err(Status::unauthenticated("Invalid credentials"));
+            warn!(identifier = %identifier, "Invalid password");
+            // TODO: Track failed attempts for lockout
+            return Ok(Response::new(Self::failed_auth()));
         }
+
+        // TODO: Check if MFA is enabled and return MFA_REQUIRED status
+        // For now, proceed directly to token creation
 
         let tokens = self
             .create_session(&user, &installation_id, &client_ctx)
@@ -327,23 +568,127 @@ impl AuthService for AuthServiceImpl {
             ip = ?client_ctx.ip_address,
             country = ?client_ctx.ip_country,
             device_type = ?client_ctx.device_type,
-            "Sign in successful"
+            "Authentication successful"
         );
 
-        Ok(Response::new(AuthInfo {
-            user_id: Some(auth_db::models::ToProtoUuid::to_proto(&user.id)),
-            user_name: user.display_name,
-            user_role: auth_db::role_to_proto(&user.role),
-            refresh_token: tokens.refresh_token,
-            access_token: tokens.access_token,
-        }))
+        Ok(Response::new(Self::build_success_auth_result(
+            &user, tokens,
+        )))
+    }
+
+    /// Register a new user account.
+    /// Returns `AuthResult` with tokens on success, or `PENDING` status if verification required.
+    #[instrument(skip(self, request), fields(identifier))]
+    async fn sign_up(
+        &self,
+        request: Request<SignUpRequest>,
+    ) -> Result<Response<AuthResult>, Status> {
+        // Extract client context before consuming request
+        let client_ctx =
+            self.build_client_context(&request, request.get_ref().client_info.as_ref());
+
+        let req = request.into_inner();
+        req.validate_or_status()?;
+
+        // Detect identifier type if not specified
+        let id_type = if req.identifier_type == IdentifierType::Unspecified as i32 {
+            Self::detect_identifier_type(&req.identifier)
+        } else {
+            IdentifierType::try_from(req.identifier_type).unwrap_or(IdentifierType::Email)
+        };
+
+        let identifier = Self::normalize_identifier(&req.identifier, id_type);
+        tracing::Span::current().record("identifier", &identifier);
+        info!(identifier = %identifier, id_type = ?id_type, "Sign up attempt");
+
+        let installation_id = req
+            .installation_id
+            .as_ref()
+            .parse_or_status_with_field("installation_id")?;
+
+        // Hash password
+        let password_hash = Self::hash_password(&req.password)?;
+
+        // Check if user already exists (prevent duplicate registration)
+        let user_exists = match id_type {
+            IdentifierType::Phone => self.db.users.get_user_by_phone(&identifier).await.is_ok(),
+            _ => self.db.users.get_user_by_email(&identifier).await.is_ok(),
+        };
+        if user_exists {
+            warn!(identifier = %identifier, "Registration attempted with existing identifier");
+            // Generic error to prevent enumeration (OWASP)
+            return Err(Status::already_exists("Registration failed"));
+        }
+
+        // Build create params based on identifier type (use references, avoid clone)
+        let (email, phone) = match id_type {
+            IdentifierType::Phone => (None, Some(identifier.as_str())),
+            _ => (Some(identifier.as_str()), None),
+        };
+
+        // Create user with profile
+        let user_id = self
+            .db
+            .users
+            .create_user_with_profile(CreateUserWithProfileParams {
+                email,
+                phone,
+                password_hash: Some(&password_hash),
+                role: "user",
+                display_name: Some(&req.display_name),
+                locale: req.locale.or_str("en"),
+                timezone: req.timezone.or_str("UTC"),
+            })
+            .await
+            .status("Failed to create user")?;
+
+        // Load created user for session creation
+        let user = self
+            .db
+            .users
+            .get_user_by_id(user_id)
+            .await
+            .status("Failed to load created user")?;
+
+        let tokens = self
+            .create_session(&user, &installation_id, &client_ctx)
+            .await?;
+
+        // Send welcome email with verification link (async, fire and forget)
+        if let Some(email) = &user.email {
+            self.spawn_welcome_email(user_id, email.clone(), user.display_name.clone(), None);
+        }
+        // TODO: Send phone verification SMS when phone-based sign up
+        // This requires an SMS provider integration (e.g., Twilio, AWS SNS)
+
+        info!(
+            user_id = %user_id,
+            ip = ?client_ctx.ip_address,
+            country = ?client_ctx.ip_country,
+            "Sign up successful"
+        );
+
+        Ok(Response::new(Self::build_success_auth_result(
+            &user, tokens,
+        )))
+    }
+
+    /// Verify MFA code to complete authentication.
+    /// Currently returns unimplemented - MFA tables need to be added first.
+    #[instrument(skip(self, _request))]
+    async fn verify_mfa(
+        &self,
+        _request: Request<VerifyMfaRequest>,
+    ) -> Result<Response<AuthResult>, Status> {
+        // TODO: Implement when MFA tables are added to database
+        Err(Status::unimplemented("MFA not yet supported"))
     }
 
     /// Sign out the current user.
     #[instrument(skip(self, request), fields(user_id))]
     async fn sign_out(&self, request: Request<()>) -> Result<Response<ResultReply>, Status> {
-        let auth = require_auth(&request)?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
 
         info!(user_id = %auth.user_id, "Signing out");
 
@@ -363,8 +708,8 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<RefreshTokenRequest>,
     ) -> Result<Response<RefreshTokenReply>, Status> {
-        let auth = require_auth(&request)?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
 
         // Extract client context for session update
         let client_ctx = self.extract_client_context(&request);
@@ -375,44 +720,45 @@ impl AuthService for AuthServiceImpl {
         debug!(user_id = %auth.user_id, "Refresh token request");
 
         // Hash the provided refresh token to compare with stored hash
-        let token_hash = hash_token(&req.refresh_token);
-
-        // Convert IP to IpNetwork for touch_session
-        let ip_network = client_ctx.ip_address.map(IpNetwork::from);
+        let token_hash = TokenGenerator::hash_token(&req.refresh_token);
 
         // Touch session validates and extends it, updates IP/country
         let _session = self
             .db
             .sessions
-            .touch_session(&token_hash, ip_network, client_ctx.ip_country.as_deref())
+            .touch_session(
+                token_hash.as_slice(),
+                client_ctx.ip_network(),
+                client_ctx.ip_country.as_deref(),
+            )
             .await
             .map_err(|e| {
                 warn!(user_id = %auth.user_id, error = %e, "Session not found or expired");
                 Status::unauthenticated("Session expired")
             })?;
 
-        let email = Self::canonical_email(&auth.email);
+        // Lookup user by ID
         let user = self
             .db
             .users
-            .get_active_user_by_email(&email)
+            .get_user_by_id(auth.user_id)
             .await
             .map_err(|e| {
-                warn!(email = %email, error = %e, "User not found during token refresh");
+                warn!(user_id = %auth.user_id, error = %e, "User not found during token refresh");
                 Status::unauthenticated("User not found")
             })?;
 
+        // Verify user is still active
+        if user.status != UserStatus::Active {
+            warn!(user_id = %auth.user_id, status = ?user.status, "Inactive user attempted token refresh");
+            return Err(Status::permission_denied("Account is not active"));
+        }
+
         // Build context with existing device info from JWT
-        let ctx = ClientContext {
-            ip_address: client_ctx.ip_address,
-            ip_country: client_ctx.ip_country,
-            device_id: Some(auth.device_id.to_string()),
-            device_name: None, // Preserve existing from DB
-            device_type: None,
-            client_version: None,
-            user_agent: None,
-            metadata: None,
-        };
+        let mut ctx = ClientContext::default();
+        ctx.with_ip(client_ctx.ip_address)
+            .with_country(client_ctx.ip_country)
+            .with_device_id(&auth.device_id);
 
         let tokens = self
             .create_session(&user, &auth.installation_id, &ctx)
@@ -436,64 +782,85 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<()>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth = require_auth(&request)?;
+        let auth = request.auth()?;
 
         debug!(user_id = %auth.user_id, "Validating credentials");
 
-        let email = Self::canonical_email(&auth.email);
-
-        self.db
+        // Lookup user by ID
+        let user = self
+            .db
             .users
-            .get_active_user_by_email(&email)
+            .get_user_by_id(auth.user_id)
             .await
             .map_err(|e| {
-                warn!(user_id = %auth.user_id, email = %email, error = %e, "User validation failed");
+                warn!(user_id = %auth.user_id, error = %e, "User validation failed");
                 Status::unauthenticated("User not found")
             })?;
+
+        // Verify user is still active
+        if user.status != UserStatus::Active {
+            warn!(user_id = %auth.user_id, status = ?user.status, "Inactive user attempted validation");
+            return Err(Status::permission_denied("Account is not active"));
+        }
 
         Ok(Response::new(ResultReply { result: true }))
     }
 
-    /// Request password reset.
+    /// Start password recovery process.
     ///
     /// Always returns success to prevent user enumeration attacks.
-    /// Sends password reset email asynchronously if user exists.
-    #[instrument(skip(self, request), fields(email))]
-    async fn reset_password(
+    /// Sends password reset email/SMS asynchronously if user exists.
+    /// Also used by OAuth-only users to add a password to their account.
+    #[instrument(skip(self, request), fields(identifier))]
+    async fn recovery_start(
         &self,
-        request: Request<ResetPasswordRequest>,
+        request: Request<RecoveryStartRequest>,
     ) -> Result<Response<ResultReply>, Status> {
         let req = request.into_inner();
         req.validate_or_status()?;
 
-        let email = Self::canonical_email(&req.email);
-        tracing::Span::current().record("email", &email);
-        debug!(email = %email, "Password reset requested");
+        // Detect identifier type if not specified
+        let id_type = if req.identifier_type == IdentifierType::Unspecified as i32 {
+            Self::detect_identifier_type(&req.identifier)
+        } else {
+            IdentifierType::try_from(req.identifier_type).unwrap_or(IdentifierType::Email)
+        };
 
-        // Check if email service is configured
+        let identifier = Self::normalize_identifier(&req.identifier, id_type);
+        tracing::Span::current().record("identifier", &identifier);
+        debug!(identifier = %identifier, id_type = ?id_type, "Password reset requested");
+
+        // Check if email service is configured (only email recovery supported for now)
         let Some(email_service) = self.email.clone() else {
             warn!("Password reset requested but email service not configured");
             // Still return success to prevent enumeration
             return Ok(Response::new(ResultReply { result: true }));
         };
 
-        let db = self.db.clone();
-        let password_reset_ttl_minutes = self.password_reset_ttl_minutes;
+        // Phone recovery would require SMS provider (future enhancement)
+        if id_type == IdentifierType::Phone {
+            warn!("Phone-based recovery not yet implemented, falling back to success response");
+            return Ok(Response::new(ResultReply { result: true }));
+        }
 
-        // Process asynchronously to prevent timing attacks
+        let db = self.db.clone();
+        let password_reset_ttl_minutes = self.config.password_reset_ttl_minutes;
+        let urls = self.config.urls.clone();
+
+        // Process asynchronously to prevent timing attacks.
+        // Note: There's an inherent race between user lookup and token creation
+        // (user could be deleted/suspended). This is acceptable for fire-and-forget
+        // since the worst case is a token created for a non-existent user.
         tokio::spawn(async move {
-            // Look up user
-            let user = match db.users.get_active_user_by_email(&email).await {
-                Ok(user) => user,
-                Err(_) => {
-                    debug!(email = %email, "User not found for password reset");
-                    return;
-                }
+            // Look up user by identifier
+            let Ok(user) = db.users.get_active_user_by_email(&identifier).await else {
+                debug!(identifier = %identifier, "User not found for password reset");
+                return;
             };
 
             // Generate secure token (URL-safe base64, 32 bytes of entropy)
             let token = TokenGenerator::generate_secure_token();
-            let token_hash = hash_token(&token);
+            let token_hash = TokenGenerator::hash_token(&token);
 
             // Calculate expiration
             let expires_at =
@@ -504,7 +871,7 @@ impl AuthService for AuthServiceImpl {
                 .password_resets
                 .create_token(CreatePasswordResetTokenParams {
                     id_user: user.id,
-                    token_hash,
+                    token_hash: &token_hash,
                     expires_at,
                 })
                 .await
@@ -513,9 +880,17 @@ impl AuthService for AuthServiceImpl {
                 return;
             }
 
+            // Build reset link
+            let reset_link = urls.password_reset(&token);
+
             // Send email
             if let Err(e) = email_service
-                .send_password_reset(&email, &user.display_name, &token, password_reset_ttl_minutes)
+                .send_password_reset(
+                    &identifier,
+                    &user.display_name,
+                    &reset_link,
+                    password_reset_ttl_minutes,
+                )
                 .await
             {
                 error!(user_id = %user.id, error = %e, "Failed to send password reset email");
@@ -529,47 +904,157 @@ impl AuthService for AuthServiceImpl {
         Ok(Response::new(ResultReply { result: true }))
     }
 
-    /// Set a new password (requires admin or self).
-    #[instrument(skip(self, request), fields(user_id, target_user_id))]
+    /// Confirm password recovery and set new password.
+    #[instrument(skip(self, request), fields(token_len))]
+    async fn recovery_confirm(
+        &self,
+        request: Request<RecoveryConfirmRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        let req = request.into_inner();
+        req.validate_or_status()?;
+
+        tracing::Span::current().record("token_len", req.token.len());
+        debug!("Password recovery confirmation attempt");
+
+        // Hash the token to look up in database
+        let token_hash = TokenGenerator::hash_token(&req.token);
+
+        // Consume the token (validates and marks as used atomically)
+        let user_id = self
+            .db
+            .password_resets
+            .consume_token(&token_hash)
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Invalid or expired password reset token");
+                Status::invalid_argument("Invalid or expired reset token")
+            })?;
+
+        // Verify user is still active (prevent reset for suspended/deleted accounts)
+        let user = self.db.users.get_user_by_id(user_id).await.map_err(|_| {
+            warn!(user_id = %user_id, "User not found or inactive during password reset");
+            Status::invalid_argument("Invalid or expired reset token")
+        })?;
+
+        if user.status != UserStatus::Active {
+            warn!(user_id = %user_id, status = ?user.status, "Password reset attempted for non-active user");
+            return Err(Status::permission_denied("Account is not active"));
+        }
+
+        // Hash the new password
+        let password_hash = Self::hash_password(&req.new_password)?;
+
+        // Update user password
+        self.db
+            .users
+            .update_user_password(user_id, &password_hash)
+            .await
+            .status("Failed to update password")?;
+
+        // Revoke all existing sessions for security
+        if let Err(e) = self.db.sessions.revoke_all_user_sessions(user_id).await {
+            warn!(user_id = %user_id, error = %e, "Failed to revoke sessions after password reset");
+            // Don't fail the request, password was already changed
+        }
+
+        info!(user_id = %user_id, "Password reset completed successfully");
+        Ok(Response::new(ResultReply { result: true }))
+    }
+
+    /// Change password (requires current password verification - OWASP).
+    /// For users who forgot password or have OAuth-only accounts, use `recovery_start`/`recovery_confirm`.
+    #[instrument(skip(self, request), fields(user_id))]
+    async fn change_password(
+        &self,
+        request: Request<ChangePasswordRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
+
+        let req = request.into_inner();
+        req.validate_or_status()?;
+
+        debug!(user_id = %auth.user_id, "Password change requested");
+
+        // Get user with current password
+        let user = self
+            .db
+            .users
+            .get_user_by_id(auth.user_id)
+            .await
+            .status("User not found")?;
+
+        // Verify current password
+        let current_password = user.password.as_deref().ok_or_else(|| {
+            warn!(user_id = %auth.user_id, "User has no password (OAuth-only) - use recovery instead");
+            Status::failed_precondition(
+                "No password set. Use password recovery to create a password.",
+            )
+        })?;
+
+        if !Encryptor::verify(&req.current_password, current_password) {
+            warn!(user_id = %auth.user_id, "Invalid current password during change");
+            return Err(Status::unauthenticated("Current password is incorrect"));
+        }
+
+        // Hash and save new password
+        let password_hash = Self::hash_password(&req.new_password)?;
+
+        self.db
+            .users
+            .update_user_password(auth.user_id, &password_hash)
+            .await
+            .status("Failed to update password")?;
+
+        // Optionally revoke other sessions (keep current session active)
+        if let Err(e) = self
+            .db
+            .sessions
+            .revoke_sessions_except_device(auth.user_id, &auth.device_id)
+            .await
+        {
+            warn!(user_id = %auth.user_id, error = %e, "Failed to revoke other sessions");
+        }
+
+        info!(user_id = %auth.user_id, "Password changed successfully");
+        Ok(Response::new(ResultReply { result: true }))
+    }
+
+    /// Set password (admin only - bypasses current password requirement).
+    #[instrument(skip(self, request), fields(admin_id, target_user_id))]
     async fn set_password(
         &self,
         request: Request<SetPasswordRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth = require_auth(&request)?;
+        let admin = request.auth_admin()?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let target_id = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
-        tracing::Span::current().record("target_user_id", &target_id.to_string());
+        tracing::Span::current().record("admin_id", admin.user_id.to_string());
+        tracing::Span::current().record("target_user_id", target_id.to_string());
 
-        auth.require_access(target_id, "change password")?;
+        info!(admin_id = %admin.user_id, target_user_id = %target_id, "Admin setting password");
 
-        let target = self.db.users.get_user_by_id(target_id).await.map_err(|e| {
-            warn!(target_user_id = %target_id, error = %e, "User not found for password change");
+        // Verify target user exists
+        self.db.users.get_user_by_id(target_id).await.map_err(|e| {
+            warn!(target_user_id = %target_id, error = %e, "User not found for password set");
             Status::not_found("User not found")
         })?;
-
-        let email = Self::canonical_email(&req.email);
-        let target_email = target.email.as_deref().map(Self::canonical_email);
-        if target_email.as_deref() != Some(&email) {
-            warn!(
-                target_user_id = %target_id,
-                provided_email = %req.email,
-                expected_email = ?target.email,
-                "Email mismatch in password change"
-            );
-            return Err(Status::invalid_argument("Email does not match user"));
-        }
 
         let hash = Self::hash_password(&req.password)?;
         self.db
             .users
-            .update_user_password(&email, &hash)
+            .update_user_password(target_id, &hash)
             .await
             .status("Failed to update password")?;
 
-        info!(user_id = %target_id, "Password updated");
+        // Revoke all sessions for security
+        if let Err(e) = self.db.sessions.revoke_all_user_sessions(target_id).await {
+            warn!(target_user_id = %target_id, error = %e, "Failed to revoke sessions after admin password set");
+        }
+
+        info!(target_user_id = %target_id, set_by = %admin.user_id, "Password set by admin");
         Ok(Response::new(ResultReply { result: true }))
     }
 
@@ -581,8 +1066,8 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<LoadUsersInfoRequest>,
     ) -> Result<Response<Self::LoadUsersInfoStream>, Status> {
-        let admin = require_admin(&request)?;
-        tracing::Span::current().record("user_id", &admin.user_id.to_string());
+        let admin = request.auth_admin()?;
+        tracing::Span::current().record("user_id", admin.user_id.to_string());
 
         let user_ids: Vec<Uuid> = request
             .into_inner()
@@ -597,6 +1082,7 @@ impl AuthService for AuthServiceImpl {
             "Loading users info"
         );
 
+        // Clone is cheap: Database wraps Arc<PgPool>
         let db = self.db.clone();
         let stream = try_stream! {
             if user_ids.is_empty() {
@@ -631,11 +1117,12 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<UserId>,
     ) -> Result<Response<Self::LoadUsersStream>, Status> {
-        let auth = require_auth(&request)?;
+        let auth = request.auth()?;
         let req = request.into_inner();
         req.validate_or_status()?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
 
+        // Clone is cheap: Database wraps Arc<PgPool>
         let db = self.db.clone();
         let is_admin = auth.is_admin();
         let user_id = auth.user_id;
@@ -671,31 +1158,49 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<CreateUserRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let admin = require_admin(&request)?;
+        let admin = request.auth_admin()?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
-        let email = Self::canonical_email(&req.email);
+        // Normalize identifiers - compute as owned strings only when needed for email sending
+        let email_normalized = (!req.email.is_empty()).then(|| Self::canonical_email(&req.email));
+        let phone_normalized = (!req.phone.is_empty()).then(|| Self::canonical_phone(&req.phone));
 
-        tracing::Span::current().record("admin_id", &admin.user_id.to_string());
-        info!(admin_id = %admin.user_id, email = %email, "Creating user");
+        // At least one identifier required
+        if email_normalized.is_none() && phone_normalized.is_none() {
+            return Err(Status::invalid_argument(
+                "Either email or phone must be provided",
+            ));
+        }
 
-        let hash = Self::hash_password(&req.password)?;
-        let role = proto_to_role(req.role)?;
+        tracing::Span::current().record("admin_id", admin.user_id.to_string());
+        info!(admin_id = %admin.user_id, email = ?email_normalized, phone = ?phone_normalized, "Creating user");
+
+        let password_hash = (!req.password.is_empty())
+            .then(|| Self::hash_password(&req.password))
+            .transpose()?;
+        let role = proto_to_role(req.role).map_err(Status::invalid_argument)?;
 
         let user_id = self
             .db
             .users
             .create_user_with_profile(CreateUserWithProfileParams {
-                email,
-                password_hash: Some(hash),
-                role: role.to_string(),
-                display_name: Some(req.name),
-                locale: "en".to_string(),
-                timezone: "UTC".to_string(),
+                email: email_normalized.as_deref(),
+                phone: phone_normalized.as_deref(),
+                password_hash: password_hash.as_deref(),
+                role,
+                display_name: Some(&req.name),
+                locale: &req.locale,
+                timezone: &req.timezone,
             })
             .await
             .status("Failed to create user")?;
+
+        // Send welcome email with verification link (async, fire and forget)
+        if let Some(email) = email_normalized {
+            let temp_password = (!req.password.is_empty()).then(|| req.password.clone());
+            self.spawn_welcome_email(user_id, email, req.name, temp_password);
+        }
 
         info!(user_id = %user_id, created_by = %admin.user_id, "User created");
         Ok(Response::new(ResultReply { result: true }))
@@ -707,34 +1212,42 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<UpdateUserRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let admin = require_admin(&request)?;
+        let admin = request.auth_admin()?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let user_id = req.id.as_ref().parse_or_status_with_field("user_id")?;
         let email = Self::canonical_email(&req.email);
 
-        tracing::Span::current().record("admin_id", &admin.user_id.to_string());
-        tracing::Span::current().record("target_user_id", &user_id.to_string());
+        tracing::Span::current().record("admin_id", admin.user_id.to_string());
+        tracing::Span::current().record("target_user_id", user_id.to_string());
         info!(
             admin_id = %admin.user_id,
             target_user_id = %user_id,
             "Updating user"
         );
 
-        let role = proto_to_role(req.role)?;
+        let role = proto_to_role(req.role).map_err(Status::invalid_argument)?;
         let status = if req.deleted {
             UserStatus::Deleted
         } else {
             UserStatus::Active
         };
 
+        // Fetch existing user to preserve profile settings not in request
+        let existing_user = self
+            .db
+            .users
+            .get_user_by_id(user_id)
+            .await
+            .map_err(|_| Status::not_found("User not found"))?;
+
         self.db
             .users
             .update_user(UpdateUserParams {
                 id: user_id,
-                role: role.to_string(),
-                email: Some(email.clone()),
+                role,
+                email: Some(&email),
                 email_verified: true,
                 phone: None,
                 phone_verified: false,
@@ -743,15 +1256,15 @@ impl AuthService for AuthServiceImpl {
             .await
             .status("Failed to update user")?;
 
-        // Update profile display name
+        // Update profile display name, preserving existing locale/timezone
         self.db
             .users
             .update_user_profile(UpdateUserProfileParams {
                 id_user: user_id,
-                display_name: req.name,
-                avatar_url: None,
-                locale: "en".to_string(),
-                timezone: "UTC".to_string(),
+                display_name: &req.name,
+                avatar_url: existing_user.avatar_url.as_deref(),
+                locale: &existing_user.locale,
+                timezone: &existing_user.timezone,
             })
             .await
             .status("Failed to update user profile")?;
@@ -766,13 +1279,13 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<GetAvatarUploadUrlRequest>,
     ) -> Result<Response<AvatarUploadUrl>, Status> {
-        let auth = require_auth(&request)?;
+        let auth = request.auth()?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let target_id: Uuid = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
-        tracing::Span::current().record("target_user_id", &target_id.to_string());
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", target_id.to_string());
 
         auth.require_access(target_id, "upload avatar")?;
         self.db
@@ -805,13 +1318,13 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<ConfirmAvatarUploadRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth = require_auth(&request)?;
+        let auth = request.auth()?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let target_id: Uuid = req.user_id.as_ref().parse_or_status_with_field("user_id")?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
-        tracing::Span::current().record("target_user_id", &target_id.to_string());
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", target_id.to_string());
 
         auth.require_access(target_id, "confirm avatar upload")?;
 
@@ -833,13 +1346,13 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<UserId>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth = require_auth(&request)?;
+        let auth = request.auth()?;
         let req = request.into_inner();
         req.validate_or_status()?;
 
         let target_id: Uuid = req.id.as_ref().parse_or_status_with_field("user_id")?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
-        tracing::Span::current().record("target_user_id", &target_id.to_string());
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
+        tracing::Span::current().record("target_user_id", target_id.to_string());
 
         auth.require_access(target_id, "delete avatar")?;
         self.delete_avatar(&target_id).await?;
@@ -853,19 +1366,21 @@ impl AuthService for AuthServiceImpl {
     // =========================================================================
 
     /// List all active sessions for the current user.
+    ///
+    /// Note: Sessions are identified by `device_id` rather than token hash.
+    /// The current session is determined by matching the JWT's device_id claim.
     #[instrument(skip(self, request), fields(user_id))]
     async fn list_sessions(
         &self,
         request: Request<()>,
     ) -> Result<Response<ListSessionsReply>, Status> {
-        let auth = require_auth(&request)?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
 
         debug!(user_id = %auth.user_id, "Listing sessions");
 
-        // We need the current session's token hash to mark it as current
-        // Since we don't have it directly, we use a placeholder (empty) for now
-        // The current session will be identified by device_id instead
+        // Sessions are identified by device_id; empty token hash means
+        // is_current will be false for all rows (we handle it client-side)
         let sessions = self
             .db
             .sessions
@@ -875,31 +1390,24 @@ impl AuthService for AuthServiceImpl {
 
         let proto_sessions: Vec<ProtoSessionInfo> = sessions
             .into_iter()
-            .map(|s| {
-                // Mark as current if device_id matches
-                let is_current = s.device_id.as_deref() == Some(&auth.device_id.to_string());
-
-                ProtoSessionInfo {
-                    device_id: s.device_id.unwrap_or_default(),
-                    device_name: s.device_name.unwrap_or_default(),
-                    device_type: s.device_type.unwrap_or_else(|| "unknown".to_string()),
-                    client_version: s.client_version.unwrap_or_default(),
-                    ip_address: s
-                        .ip_address
-                        .map(|ip| ip.ip().to_string())
-                        .unwrap_or_default(),
-                    ip_country: s.ip_country.unwrap_or_default(),
-                    created_at: s.created_at.timestamp_millis(),
-                    last_seen_at: s.last_seen_at.timestamp_millis(),
-                    expires_at: s.expires_at.timestamp_millis(),
-                    is_current,
-                    ip_created_by: s
-                        .ip_created_by
-                        .map(|ip| ip.ip().to_string())
-                        .unwrap_or_default(),
-                    activity_count: s.activity_count,
-                    metadata: json_to_proto_struct(s.metadata),
-                }
+            .map(|s| ProtoSessionInfo {
+                is_current: s.device_id.as_deref() == Some(auth.device_id.as_str()),
+                device_id: s.device_id.unwrap_or_default(),
+                device_name: s.device_name.unwrap_or_default(),
+                device_type: s.device_type.or_str("unknown"),
+                client_version: s.client_version.unwrap_or_default(),
+                ip_address: s
+                    .ip_address
+                    .map_or_else(String::new, |ip| ip.ip().to_string()),
+                ip_country: s.ip_country.unwrap_or_default(),
+                created_at: s.created_at.timestamp_millis(),
+                last_seen_at: s.last_seen_at.timestamp_millis(),
+                expires_at: s.expires_at.timestamp_millis(),
+                ip_created_by: s
+                    .ip_created_by
+                    .map_or_else(String::new, |ip| ip.ip().to_string()),
+                activity_count: s.activity_count,
+                metadata: json_to_proto_struct(s.metadata),
             })
             .collect();
 
@@ -910,14 +1418,14 @@ impl AuthService for AuthServiceImpl {
         }))
     }
 
-    /// Revoke a specific session by device_id.
+    /// Revoke a specific session by `device_id`.
     #[instrument(skip(self, request), fields(user_id))]
     async fn revoke_session(
         &self,
         request: Request<RevokeSessionRequest>,
     ) -> Result<Response<ResultReply>, Status> {
-        let auth = require_auth(&request)?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
 
         let req = request.into_inner();
         req.validate_or_status()?;
@@ -947,8 +1455,8 @@ impl AuthService for AuthServiceImpl {
         &self,
         request: Request<()>,
     ) -> Result<Response<RevokeSessionsReply>, Status> {
-        let auth = require_auth(&request)?;
-        tracing::Span::current().record("user_id", &auth.user_id.to_string());
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
 
         debug!(user_id = %auth.user_id, "Revoking other sessions");
 
@@ -956,14 +1464,128 @@ impl AuthService for AuthServiceImpl {
         let count = self
             .db
             .sessions
-            .revoke_sessions_except_device(auth.user_id, &auth.device_id.to_string())
+            .revoke_sessions_except_device(auth.user_id, &auth.device_id)
             .await
             .status("Failed to revoke sessions")?;
 
         info!(user_id = %auth.user_id, count, "Other sessions revoked");
 
         Ok(Response::new(RevokeSessionsReply {
-            revoked_count: count as i32,
+            revoked_count: i32::try_from(count).unwrap_or(i32::MAX),
         }))
+    }
+
+    // =========================================================================
+    // OAuth 2.0 / OpenID Connect (Stubs)
+    // =========================================================================
+    // TODO: Implement OAuth flows using oauth_states and providers tables
+
+    /// Get OAuth authorization URL with PKCE state.
+    #[instrument(skip(self, _request))]
+    async fn get_o_auth_url(
+        &self,
+        _request: Request<GetOAuthUrlRequest>,
+    ) -> Result<Response<OAuthUrlReply>, Status> {
+        Err(Status::unimplemented("OAuth not yet implemented"))
+    }
+
+    /// Exchange OAuth callback code for tokens.
+    #[instrument(skip(self, _request))]
+    async fn exchange_o_auth_code(
+        &self,
+        _request: Request<ExchangeOAuthCodeRequest>,
+    ) -> Result<Response<AuthResult>, Status> {
+        Err(Status::unimplemented("OAuth not yet implemented"))
+    }
+
+    /// Link OAuth provider to existing account.
+    #[instrument(skip(self, _request))]
+    async fn link_o_auth_provider(
+        &self,
+        _request: Request<LinkOAuthProviderRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        Err(Status::unimplemented("OAuth not yet implemented"))
+    }
+
+    /// Unlink OAuth provider from account.
+    #[instrument(skip(self, _request))]
+    async fn unlink_o_auth_provider(
+        &self,
+        _request: Request<UnlinkOAuthProviderRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        Err(Status::unimplemented("OAuth not yet implemented"))
+    }
+
+    /// List linked OAuth providers for current user.
+    #[instrument(skip(self, _request))]
+    async fn list_linked_providers(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<LinkedProvidersReply>, Status> {
+        Err(Status::unimplemented("OAuth not yet implemented"))
+    }
+
+    // =========================================================================
+    // Email/Phone Verification (Stubs)
+    // =========================================================================
+    // TODO: Implement verification_tokens table first
+
+    /// Request verification code for email or phone.
+    #[instrument(skip(self, _request))]
+    async fn request_verification(
+        &self,
+        _request: Request<RequestVerificationRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        Err(Status::unimplemented("Verification not yet implemented"))
+    }
+
+    /// Confirm verification with code.
+    #[instrument(skip(self, _request))]
+    async fn confirm_verification(
+        &self,
+        _request: Request<ConfirmVerificationRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        Err(Status::unimplemented("Verification not yet implemented"))
+    }
+
+    // =========================================================================
+    // MFA Management (Stubs)
+    // =========================================================================
+    // TODO: Implement MFA tables first (mfa_methods, mfa_recovery_codes)
+
+    /// Get current MFA status for user.
+    #[instrument(skip(self, _request))]
+    async fn get_mfa_status(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<MfaStatusReply>, Status> {
+        Err(Status::unimplemented("MFA not yet implemented"))
+    }
+
+    /// Begin MFA setup.
+    #[instrument(skip(self, _request))]
+    async fn setup_mfa(
+        &self,
+        _request: Request<SetupMfaRequest>,
+    ) -> Result<Response<SetupMfaReply>, Status> {
+        Err(Status::unimplemented("MFA not yet implemented"))
+    }
+
+    /// Confirm MFA setup with verification code.
+    #[instrument(skip(self, _request))]
+    async fn confirm_mfa_setup(
+        &self,
+        _request: Request<ConfirmMfaSetupRequest>,
+    ) -> Result<Response<MfaSetupResult>, Status> {
+        Err(Status::unimplemented("MFA not yet implemented"))
+    }
+
+    /// Disable MFA (requires password verification).
+    #[instrument(skip(self, _request))]
+    async fn disable_mfa(
+        &self,
+        _request: Request<DisableMfaRequest>,
+    ) -> Result<Response<ResultReply>, Status> {
+        Err(Status::unimplemented("MFA not yet implemented"))
     }
 }

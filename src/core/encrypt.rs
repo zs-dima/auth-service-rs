@@ -11,6 +11,10 @@ pub struct Encryptor;
 
 impl Encryptor {
     /// Hash a password using Argon2id.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::Internal` if password hashing fails.
     pub fn hash(password: &str) -> Result<String, AppError> {
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
@@ -23,10 +27,10 @@ impl Encryptor {
     }
 
     /// Verify a password against its hash.
+    #[must_use]
     pub fn verify(password: &str, hash: &str) -> bool {
-        let parsed_hash = match PasswordHash::new(hash) {
-            Ok(h) => h,
-            Err(_) => return false,
+        let Ok(parsed_hash) = PasswordHash::new(hash) else {
+            return false;
         };
 
         Argon2::default()

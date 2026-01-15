@@ -382,6 +382,47 @@ CREATE INDEX password_reset_user_ix
   ON password_reset_tokens (id_user, expires_at DESC)
   WHERE used_at IS NULL;
 
+-- =====================================================
+-- EMAIL_VERIFICATION_TOKENS TABLE
+-- =====================================================
+-- Stores secure email verification tokens with expiration.
+-- Tokens are single-use and expire after a configurable period.
+CREATE TABLE email_verification_tokens (
+  id            UUID PRIMARY KEY DEFAULT uuidv7(),
+  id_user       UUID NOT NULL
+                CONSTRAINT email_verification_id_user_fk
+                REFERENCES users(id) ON DELETE CASCADE,
+
+  -- Token storage (SHA-256 = 32 bytes, hash of the actual token)
+  token_hash    BYTEA NOT NULL
+                CONSTRAINT email_verification_token_len_ck
+                CHECK (octet_length(token_hash) = 32),
+
+  -- Expiration and usage tracking
+  expires_at    TIMESTAMPTZ NOT NULL,
+  used_at       TIMESTAMPTZ,       -- NULL if not yet used, set when consumed
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT email_verification_expires_ck
+    CHECK (expires_at > created_at)
+);
+COMMENT ON TABLE email_verification_tokens IS 'Email verification tokens - single use, configurable expiry';
+COMMENT ON COLUMN email_verification_tokens.token_hash IS 'SHA-256 hash of the verification token (32 bytes)';
+
+-- Index for token lookup
+CREATE INDEX email_verification_token_hash_ix
+  ON email_verification_tokens (token_hash)
+  WHERE used_at IS NULL;
+
+-- Index for cleanup job
+CREATE INDEX email_verification_expires_ix
+  ON email_verification_tokens (expires_at);
+
+-- Index for finding user's active tokens
+CREATE INDEX email_verification_user_ix
+  ON email_verification_tokens (id_user, expires_at DESC)
+  WHERE used_at IS NULL;
+
 -- =============================================================================
 -- FUNCTIONS
 -- =============================================================================
@@ -411,11 +452,12 @@ BEGIN
 END;
 $$;
 
--- Create user with profile atomically
+-- Create user with profile atomically (supports email OR phone registration)
 -- Returns: UUID of created user
--- Raises: unique_violation if email exists, foreign_key_violation if role doesn't exist
+-- Raises: unique_violation if email/phone exists, foreign_key_violation if role doesn't exist
 CREATE OR REPLACE FUNCTION auth.create_user_with_profile(
-  p_email TEXT,
+  p_email TEXT DEFAULT NULL,
+  p_phone TEXT DEFAULT NULL,
   p_password_hash TEXT DEFAULT NULL,
   p_role auth.role_name DEFAULT 'user',
   p_display_name TEXT DEFAULT NULL,
@@ -433,13 +475,31 @@ DECLARE
   v_id_user UUID;
   v_display_name TEXT;
   v_normalized_email auth.email;
+  v_normalized_phone auth.phone_e164;
 BEGIN
-  -- Normalize email early to fail fast on invalid format
-  v_normalized_email := auth.normalize_email(p_email);
-  v_display_name := COALESCE(NULLIF(trim(p_display_name), ''), split_part(p_email, '@', 1));
+  -- Validate at least one identifier
+  IF p_email IS NULL AND p_phone IS NULL THEN
+    RAISE EXCEPTION 'Either email or phone must be provided'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
 
-  INSERT INTO auth.users (email, password, role)
-  VALUES (v_normalized_email, p_password_hash, p_role)
+  -- Normalize identifiers
+  IF p_email IS NOT NULL THEN
+    v_normalized_email := auth.normalize_email(p_email);
+  END IF;
+  
+  IF p_phone IS NOT NULL THEN
+    v_normalized_phone := p_phone::auth.phone_e164;
+  END IF;
+
+  -- Derive display name: provided > email username > 'User'
+  v_display_name := COALESCE(
+    NULLIF(trim(p_display_name), ''),
+    CASE WHEN p_email IS NOT NULL THEN split_part(p_email, '@', 1) ELSE 'User' END
+  );
+
+  INSERT INTO auth.users (email, phone, password, role)
+  VALUES (v_normalized_email, v_normalized_phone, p_password_hash, p_role)
   RETURNING id INTO v_id_user;
 
   INSERT INTO auth.user_profiles (id_user, display_name, locale, timezone)
@@ -448,7 +508,7 @@ BEGIN
   RETURN v_id_user;
 END;
 $$;
-COMMENT ON FUNCTION auth.create_user_with_profile IS 'Atomically creates user and profile; raises unique_violation on duplicate email';
+COMMENT ON FUNCTION auth.create_user_with_profile IS 'Atomically creates user and profile; supports email or phone registration';
 
 -- Link OAuth provider to user (stores OAuth name and avatar when available)
 -- Returns id_user on success (INSERT or UPDATE)

@@ -1,7 +1,7 @@
 //! JWT authentication middleware for gRPC and REST endpoints.
 //!
 //! Validates Bearer tokens and injects `AuthInfo` into request extensions.
-//! Uses the shared `JwtValidator` from core::jwt for consistency.
+//! Uses the shared `JwtValidator` from `crate::core::jwt` for consistency.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -19,10 +19,15 @@ use crate::core::{AuthInfo, JwtError, JwtValidator};
 /// Public routes that bypass authentication.
 /// Uses compile-time perfect hash function for O(1) lookup with zero runtime initialization.
 static PUBLIC_ROUTES: phf::Set<&'static str> = phf_set! {
-    // gRPC public methods
-    "SignIn",
-    "ResetPassword",
-    "SetPassword",
+    // gRPC public methods (authentication)
+    "Authenticate",
+    "SignUp",
+    "RecoveryStart",
+    "RecoveryConfirm",
+    "RefreshTokens",
+    // gRPC public methods (OAuth)
+    "GetOAuthUrl",
+    "ExchangeOAuthCode",
     // gRPC health checks
     "Check",
     "Watch",
@@ -43,7 +48,7 @@ pub struct AuthLayer {
 
 impl AuthLayer {
     #[must_use]
-    pub fn new(validator: JwtValidator) -> Self {
+    pub const fn new(validator: JwtValidator) -> Self {
         Self { validator }
     }
 }
@@ -184,12 +189,15 @@ mod tests {
 
     #[test]
     fn public_routes_identified_correctly() {
-        assert!(is_public_route("/auth.AuthService/SignIn"));
+        assert!(is_public_route("/auth.AuthService/Authenticate"));
+        assert!(is_public_route("/auth.AuthService/SignUp"));
+        assert!(is_public_route("/auth.AuthService/RecoveryStart"));
         assert!(is_public_route("/grpc.health.v1.Health/Check"));
         assert!(is_public_route("/health"));
         assert!(is_public_route("/health/ready"));
         assert!(is_public_route("/"));
         assert!(!is_public_route("/auth.AuthService/CreateUser"));
+        assert!(!is_public_route("/auth.AuthService/SetPassword"));
         assert!(!is_public_route("/api/users"));
     }
 
