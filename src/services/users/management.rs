@@ -167,7 +167,7 @@ impl UserService {
             .users
             .get_user_by_id(user_id)
             .await
-            .status("Failed to load created user")?;
+            .status("Failed to get created user")?;
 
         Ok(ProtoUser::from(user))
     }
@@ -268,7 +268,7 @@ impl UserService {
             .users
             .get_user_by_id(user_id)
             .await
-            .status("Failed to load updated user")?;
+            .status("Failed to get updated user")?;
 
         Ok(ProtoUser::from(updated_user))
     }

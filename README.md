@@ -154,7 +154,7 @@ All secrets support `*_FILE` variants for Docker/Kubernetes secrets:
 - `ListSessions` / `RevokeSession` / `RevokeOtherSessions`
 
 ### User Management (Admin)
-- `LoadUsersInfo` / `LoadUsers` / `CreateUser` / `UpdateUser`
+- `ListUsersInfo` / `ListUsers` / `CreateUser` / `UpdateUser`
 
 ## Development
 

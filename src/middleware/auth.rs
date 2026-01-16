@@ -37,6 +37,7 @@ static PUBLIC_ROUTES: phf::Set<&'static str> = phf_set! {
     "/health/ready",
     "/ready",
     "/metrics",
+    "/verify-email",
     "/",
 };
 
@@ -195,6 +196,7 @@ mod tests {
         assert!(is_public_route("/grpc.health.v1.Health/Check"));
         assert!(is_public_route("/health"));
         assert!(is_public_route("/health/ready"));
+        assert!(is_public_route("/verify-email"));
         assert!(is_public_route("/"));
         assert!(!is_public_route("/auth.AuthService/CreateUser"));
         assert!(!is_public_route("/auth.AuthService/SetPassword"));

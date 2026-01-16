@@ -282,7 +282,7 @@ impl UserRepository {
                    email_verified = $4,
                    phone = $5::TEXT::auth.phone_e164,
                    phone_verified = $6,
-                   status = $7
+                   status = $7::TEXT::auth.user_status
              WHERE id = $1
             "#,
             params.id,
