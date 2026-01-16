@@ -17,6 +17,9 @@ prost-types = "0.14"
 prost-validate = { version = "0.2", features = ["derive"] }
 uuid = "1"
 
+# Required by prost-validate derive macro for pattern validation
+regex = "1"
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 prost-build = "0.14"

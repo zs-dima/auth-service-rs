@@ -6,6 +6,7 @@
 use std::fs;
 use std::time::Duration;
 
+use auth_core::JwtValidator;
 use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 use tracing::debug;
@@ -534,4 +535,36 @@ mod tests {
         let url = config.smtp_url_with_password().unwrap();
         assert_eq!(url, "smtp://localhost:25");
     }
+}
+
+// =============================================================================
+// Auth Service Configuration
+// =============================================================================
+
+/// Runtime configuration for the auth service.
+///
+/// Groups JWT validation and token TTLs. Database, email, and URLs are in `ServiceContext`.
+#[derive(Clone)]
+pub struct AuthServiceConfig {
+    /// JWT validator for token operations.
+    pub jwt_validator: JwtValidator,
+    /// Access token time-to-live in minutes.
+    pub access_token_ttl_minutes: u64,
+    /// Refresh token time-to-live in days.
+    pub refresh_token_ttl_days: i64,
+    /// Password reset token TTL in minutes.
+    pub password_reset_ttl_minutes: u32,
+    /// Email verification token TTL in hours.
+    pub email_verification_ttl_hours: u32,
+}
+
+// =============================================================================
+// User Service Configuration
+// =============================================================================
+
+/// Runtime configuration for the user service.
+#[derive(Clone)]
+pub struct UserServiceConfig {
+    /// Email verification token TTL in hours.
+    pub email_verification_ttl_hours: u32,
 }

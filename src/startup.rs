@@ -4,11 +4,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use auth_core::OptionStrExt;
+use auth_core::{JwtValidator, OptionStrExt};
 use auth_db::{Database, DbConfig, create_pool};
 use auth_email::{EmailConfig, EmailService};
 use auth_mailjet::{MailjetConfig, MailjetService};
 use auth_proto::auth::auth_service_server::AuthServiceServer;
+use auth_proto::users::user_service_server::UserServiceServer;
 use auth_storage::{S3Config, S3Storage};
 use axum::Router;
 use http::Request;
@@ -22,112 +23,17 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{Level, info, warn};
 
-use crate::config::Config;
-use crate::core::{GeolocationService, JwtValidator, UrlBuilder};
+use crate::config::{AuthServiceConfig, Config, UserServiceConfig};
+use crate::core::{EmailProvider, GeolocationService, ServiceContext, UrlBuilder};
 use crate::middleware::{AuthLayer, RequestIdLayer};
 use crate::routes::rest_routes;
-use crate::services::AuthServiceImpl;
+use crate::services::{AuthService, UserService};
 
 /// Maximum gRPC message size (32 MB).
 const GRPC_MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
 
 /// Request timeout duration.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
-
-/// Email provider type alias for boxed async error.
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-/// Wrapper for email providers (SMTP or Mailjet).
-#[derive(Clone)]
-pub enum EmailProvider {
-    /// SMTP with code-based templates.
-    Smtp(Arc<EmailService>),
-    /// Mailjet with platform-hosted templates.
-    Mailjet(Arc<MailjetService>),
-}
-
-impl EmailProvider {
-    /// Send a password reset email using the configured provider.
-    ///
-    /// # Errors
-    /// Returns an error if the email fails to send.
-    pub async fn send_password_reset(
-        &self,
-        to_email: &str,
-        to_name: &str,
-        reset_url: &str,
-        expires_minutes: u32,
-    ) -> Result<(), BoxError> {
-        match self {
-            Self::Smtp(service) => {
-                // SMTP uses code templates with expires_minutes
-                service
-                    .send_password_reset(to_email, to_name, reset_url, expires_minutes)
-                    .await
-                    .map_err(Into::into)
-            }
-            Self::Mailjet(service) => {
-                // Mailjet uses platform templates (expires_minutes in template)
-                service
-                    .send_password_reset(to_email, to_name, reset_url)
-                    .await
-                    .map_err(Into::into)
-            }
-        }
-    }
-
-    /// Send a welcome email to a new user.
-    ///
-    /// # Errors
-    /// Returns an error if the email fails to send.
-    pub async fn send_welcome(
-        &self,
-        to_email: &str,
-        to_name: &str,
-        login_url: &str,
-        temp_password: Option<&str>,
-        verification_url: Option<&str>,
-    ) -> Result<(), BoxError> {
-        match self {
-            Self::Smtp(_service) => {
-                // TODO: Implement SMTP welcome email template
-                Ok(())
-            }
-            Self::Mailjet(service) => service
-                .send_welcome(
-                    to_email,
-                    to_name,
-                    login_url,
-                    temp_password,
-                    verification_url,
-                )
-                .await
-                .map_err(Into::into),
-        }
-    }
-
-    /// Send a password changed confirmation email.
-    ///
-    /// # Errors
-    /// Returns an error if the email fails to send.
-    #[allow(dead_code)]
-    pub async fn send_password_changed(
-        &self,
-        to_email: &str,
-        to_name: &str,
-    ) -> Result<(), BoxError> {
-        match self {
-            Self::Smtp(_service) => {
-                // TODO: Implement SMTP password changed email template
-                Ok(())
-            }
-            Self::Mailjet(service) => service
-                .send_password_changed(to_email, to_name)
-                .await
-                .map_err(Into::into),
-        }
-    }
-}
 
 /// Application state shared across handlers.
 #[derive(Clone)]
@@ -189,29 +95,41 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
     // Build URL builder for frontend links
     let urls = UrlBuilder::new(&domain);
 
-    // Build auth service config
-    let auth_config = crate::services::AuthServiceConfig {
+    // Build shared service context (infrastructure only)
+    let service_ctx = Arc::new(ServiceContext::new(
+        database.clone(),
+        email_service.clone(),
+        s3_storage.clone(),
+        urls.clone(),
+    ));
+
+    // Build auth service config (auth-specific settings)
+    let auth_config = AuthServiceConfig {
         jwt_validator: jwt_validator.clone(),
         access_token_ttl_minutes: config.access_token_ttl_minutes,
         refresh_token_ttl_days: config.refresh_token_ttl_days,
         password_reset_ttl_minutes: config.password_reset_ttl_minutes,
         email_verification_ttl_hours: config.email_verification_ttl_hours,
-        urls: urls.clone(),
     };
 
-    // Build auth service with config and dependencies
-    let auth_service = AuthServiceImpl::new(
-        auth_config,
-        database.clone(),
-        s3_storage.clone(),
-        email_service.clone(),
-        geolocation.clone(),
-    );
+    // Build user service config
+    let user_config = UserServiceConfig {
+        email_verification_ttl_hours: config.email_verification_ttl_hours,
+    };
+
+    // Build auth service with shared context
+    let auth_service = AuthService::new(auth_config, service_ctx.clone(), geolocation.clone());
+
+    // Build user service with shared context
+    let user_service = UserService::new(user_config, service_ctx.clone());
 
     // Health reporter
     let (health_reporter, health_service) = health_reporter();
     health_reporter
-        .set_serving::<AuthServiceServer<AuthServiceImpl>>()
+        .set_serving::<AuthServiceServer<AuthService>>()
+        .await;
+    health_reporter
+        .set_serving::<UserServiceServer<UserService>>()
         .await;
 
     // Auth server
@@ -219,8 +137,15 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
+    // User server
+    let user_server = UserServiceServer::new(user_service)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+
     // gRPC routes
-    let mut grpc_routes = Routes::new(health_service).add_service(auth_server);
+    let mut grpc_routes = Routes::new(health_service)
+        .add_service(auth_server)
+        .add_service(user_server);
 
     if config.grpc_reflection {
         let reflection = tonic_reflection::server::Builder::configure()

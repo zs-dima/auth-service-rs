@@ -75,6 +75,17 @@ impl std::str::FromStr for UserRole {
     }
 }
 
+/// Session tokens returned after successful authentication.
+///
+/// Contains both access and refresh tokens for client storage.
+#[derive(Debug, Clone)]
+pub struct SessionTokens {
+    /// Short-lived JWT for API authentication.
+    pub access_token: String,
+    /// Long-lived token for obtaining new access tokens.
+    pub refresh_token: String,
+}
+
 /// Validated authentication info from JWT.
 ///
 /// Single source of truth for auth context across middleware and services.

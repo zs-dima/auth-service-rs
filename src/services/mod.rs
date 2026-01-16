@@ -1,5 +1,7 @@
 //! gRPC/HTTP service implementations.
 
-pub mod auth;
+mod auth;
+mod users;
 
-pub use auth::{AuthServiceConfig, AuthServiceImpl};
+pub use auth::AuthService;
+pub use users::UserService;

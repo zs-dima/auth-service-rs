@@ -36,7 +36,7 @@ auth-storage = { path = "crates/storage" }
 auth-telemetry = { path = "crates/telemetry" }
 
 # Async runtime
-tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-stream = "0.1"
 
 # gRPC & protobuf

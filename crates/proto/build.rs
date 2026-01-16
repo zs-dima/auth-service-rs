@@ -1,7 +1,11 @@
 use std::io::Result;
 
 fn main() -> Result<()> {
-    let proto_files = &["../../proto/auth.proto", "../../proto/core.proto"];
+    let proto_files = &[
+        "../../proto/auth.proto",
+        "../../proto/users.proto",
+        "../../proto/core.proto",
+    ];
     let includes = &["../../proto"];
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
@@ -31,6 +35,7 @@ fn main() -> Result<()> {
 
     // Recompile if proto files change
     println!("cargo:rerun-if-changed=../../proto/auth.proto");
+    println!("cargo:rerun-if-changed=../../proto/users.proto");
     println!("cargo:rerun-if-changed=../../proto/core.proto");
     println!("cargo:rerun-if-changed=../../proto/validate/validate.proto");
 

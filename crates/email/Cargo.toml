@@ -9,7 +9,7 @@ rust-version.workspace = true
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 
 # Async runtime
-tokio = { version = "1.48", features = ["rt"] }
+tokio = { version = "1.49", features = ["rt"] }
 
 # Error handling
 thiserror = "2.0"

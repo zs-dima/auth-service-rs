@@ -17,6 +17,12 @@ pub mod auth {
 
 #[allow(clippy::all, clippy::pedantic, dead_code)]
 #[cfg_attr(doc, allow(unconditional_recursion))]
+pub mod users {
+    tonic::include_proto!("users");
+}
+
+#[allow(clippy::all, clippy::pedantic, dead_code)]
+#[cfg_attr(doc, allow(unconditional_recursion))]
 pub mod core {
     tonic::include_proto!("core");
 }

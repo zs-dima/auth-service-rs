@@ -1,12 +1,13 @@
 //! JWT authentication middleware for gRPC and REST endpoints.
 //!
 //! Validates Bearer tokens and injects `AuthInfo` into request extensions.
-//! Uses the shared `JwtValidator` from `crate::core::jwt` for consistency.
+//! Uses the shared `JwtValidator` from `auth_core` for consistency.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use auth_core::{AuthInfo, JwtError, JwtValidator};
 use axum::body::Body;
 use http::{Request, Response, StatusCode};
 use phf::phf_set;
@@ -14,7 +15,6 @@ use tower::{Layer, Service};
 use tracing::{Span, debug};
 
 use super::client_ip::ClientIp;
-use crate::core::{AuthInfo, JwtError, JwtValidator};
 
 /// Public routes that bypass authentication.
 /// Uses compile-time perfect hash function for O(1) lookup with zero runtime initialization.

@@ -1,7 +1,8 @@
 //! Database models and parameter types for the auth schema.
 
-use auth_core::{JwtSubject, ToProtoUuid};
-use auth_proto::auth::UserRole as ProtoUserRole;
+use auth_core::{JwtSubject, ToProtoTimestamp, ToProtoUuid};
+use auth_proto::core::UserRole as ProtoUserRole;
+use auth_proto::core::UserStatus as ProtoUserStatus;
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
@@ -133,7 +134,6 @@ pub fn proto_to_role_or_status(proto: i32) -> Result<&'static str, Status> {
 /// Convert `UserStatus` to proto enum value.
 #[must_use]
 pub const fn status_to_proto(status: UserStatus) -> i32 {
-    use auth_proto::auth::UserStatus as ProtoUserStatus;
     match status {
         UserStatus::Pending => ProtoUserStatus::Pending as i32,
         UserStatus::Active => ProtoUserStatus::Active as i32,
@@ -233,6 +233,58 @@ impl JwtSubject for UserWithProfile {
     }
 }
 
+/// Convert `UserWithProfile` to proto `users::User` for full user responses.
+impl From<&UserWithProfile> for auth_proto::users::User {
+    fn from(u: &UserWithProfile) -> Self {
+        Self {
+            id: Some(u.id.to_proto()),
+            name: u.display_name.clone(),
+            email: u.email.clone().unwrap_or_default(),
+            phone: u.phone.clone().unwrap_or_default(),
+            role: role_to_proto(&u.role),
+            status: status_to_proto(u.status),
+            email_verified: u.email_verified,
+            phone_verified: u.phone_verified,
+            mfa_enabled: false, // TODO: Implement MFA
+            has_password: u.password.is_some(),
+            avatar_url: u.avatar_url.clone().unwrap_or_default(),
+            locale: u.locale.clone(),
+            timezone: u.timezone.clone(),
+            created_at: Some(u.created_at.to_proto_timestamp()),
+            updated_at: Some(u.updated_at.to_proto_timestamp()),
+        }
+    }
+}
+
+impl From<UserWithProfile> for auth_proto::users::User {
+    fn from(u: UserWithProfile) -> Self {
+        Self::from(&u)
+    }
+}
+
+/// Convert `UserWithProfile` to proto `users::UserInfo` for lightweight responses.
+impl From<&UserWithProfile> for auth_proto::users::UserInfo {
+    fn from(u: &UserWithProfile) -> Self {
+        Self {
+            id: Some(u.id.to_proto()),
+            name: u.display_name.clone(),
+            email: u.email.clone().unwrap_or_default(),
+            phone: u.phone.clone().unwrap_or_default(),
+            role: role_to_proto(&u.role),
+            status: status_to_proto(u.status),
+            avatar_url: u.avatar_url.clone().unwrap_or_default(),
+            locale: u.locale.clone(),
+            timezone: u.timezone.clone(),
+        }
+    }
+}
+
+impl From<UserWithProfile> for auth_proto::users::UserInfo {
+    fn from(u: UserWithProfile) -> Self {
+        Self::from(&u)
+    }
+}
+
 /// OAuth provider link from `auth.providers` table.
 #[derive(Debug, Clone, FromRow)]
 pub struct Provider {
@@ -312,74 +364,98 @@ pub struct UserInfo {
     pub deleted: bool,
 }
 
-impl From<&UserInfo> for auth_proto::auth::UserInfo {
+impl From<&UserInfo> for auth_proto::users::UserInfo {
     fn from(u: &UserInfo) -> Self {
         Self {
             id: Some(u.id.to_proto()),
             name: u.display_name.clone(),
             email: u.email.clone().unwrap_or_default(),
             role: role_to_proto(&u.role),
-            deleted: u.deleted,
+            status: if u.deleted {
+                ProtoUserStatus::Deleted as i32
+            } else {
+                ProtoUserStatus::Active as i32
+            },
             // Fields not available from UserInfo (minimal query)
             phone: String::new(),
-            email_verified: false,
-            phone_verified: false,
-            mfa_enabled: false,
-            status: 0,
-            linked_providers: Vec::new(),
+            avatar_url: String::new(),
+            locale: String::new(),
+            timezone: String::new(),
         }
     }
 }
 
-impl From<UserInfo> for auth_proto::auth::UserInfo {
+impl From<UserInfo> for auth_proto::users::UserInfo {
     fn from(u: UserInfo) -> Self {
         Self {
             id: Some(u.id.to_proto()),
             name: u.display_name,
             email: u.email.unwrap_or_default(),
             role: role_to_proto(&u.role),
-            deleted: u.deleted,
+            status: if u.deleted {
+                ProtoUserStatus::Deleted as i32
+            } else {
+                ProtoUserStatus::Active as i32
+            },
             // Fields not available from UserInfo (minimal query)
             phone: String::new(),
-            email_verified: false,
-            phone_verified: false,
-            mfa_enabled: false,
-            status: 0,
-            linked_providers: Vec::new(),
+            avatar_url: String::new(),
+            locale: String::new(),
+            timezone: String::new(),
         }
     }
 }
 
-impl From<&UserInfo> for auth_proto::auth::User {
+impl From<&UserInfo> for auth_proto::users::User {
     fn from(u: &UserInfo) -> Self {
         Self {
             id: Some(u.id.to_proto()),
             name: u.display_name.clone(),
             email: u.email.clone().unwrap_or_default(),
             role: role_to_proto(&u.role),
-            deleted: u.deleted,
+            status: if u.deleted {
+                ProtoUserStatus::Deleted as i32
+            } else {
+                ProtoUserStatus::Active as i32
+            },
             // Fields not available from UserInfo (minimal query)
             phone: String::new(),
-            status: String::new(),
-            created_at: 0,
-            updated_at: 0,
+            email_verified: false,
+            phone_verified: false,
+            mfa_enabled: false,
+            has_password: false,
+            avatar_url: String::new(),
+            locale: String::new(),
+            timezone: String::new(),
+            created_at: None,
+            updated_at: None,
         }
     }
 }
 
-impl From<UserInfo> for auth_proto::auth::User {
+impl From<UserInfo> for auth_proto::users::User {
     fn from(u: UserInfo) -> Self {
         Self {
             id: Some(u.id.to_proto()),
             name: u.display_name,
             email: u.email.unwrap_or_default(),
             role: role_to_proto(&u.role),
-            deleted: u.deleted,
+            status: if u.deleted {
+                ProtoUserStatus::Deleted as i32
+            } else {
+                ProtoUserStatus::Active as i32
+            },
             // Fields not available from UserInfo (minimal query)
             phone: String::new(),
-            status: String::new(),
-            created_at: 0,
-            updated_at: 0,
+            email_verified: false,
+            phone_verified: false,
+            mfa_enabled: false,
+            has_password: false,
+            avatar_url: String::new(),
+            locale: String::new(),
+            timezone: String::new(),
+            created_at: None,
+            updated_at: None,
         }
     }
 }

@@ -18,8 +18,13 @@ pub mod validation;
 
 pub use error::{AppError, OptionStatusExt, StatusExt};
 #[cfg(feature = "jwt")]
-pub use jwt::{AuthInfo, JwtError, JwtSubject, JwtValidator, TokenGenerator, UserRole};
-pub use proto_ext::{ToProtoUuid, UuidExt, json_to_proto_struct, proto_struct_to_json};
+pub use jwt::{
+    AuthInfo, JwtError, JwtSubject, JwtValidator, SessionTokens, TokenGenerator, UserRole,
+};
+pub use proto_ext::{
+    FromProtoTimestamp, ProtoDuration, ProtoTimestamp, ToProtoDuration, ToProtoTimestamp,
+    ToProtoUuid, UuidExt, json_to_proto_struct, proto_struct_to_json,
+};
 #[cfg(feature = "jwt")]
 pub use request_ext::RequestAuthExt;
 pub use str_ext::{OptionStrExt, StrExt};

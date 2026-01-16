@@ -7,6 +7,9 @@ use prost_types::value::Kind;
 use tonic::Status;
 use uuid::Uuid;
 
+// Re-export prost_types for downstream use
+pub use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
+
 // =============================================================================
 // Proto UUID
 // =============================================================================
@@ -147,6 +150,75 @@ macro_rules! impl_proto_uuid {
             }
         }
     };
+}
+
+// =============================================================================
+// Proto Timestamp <-> chrono::DateTime Conversions
+// =============================================================================
+
+/// Extension trait for converting `chrono::DateTime<Utc>` to `prost_types::Timestamp`.
+pub trait ToProtoTimestamp {
+    /// Convert to protobuf Timestamp.
+    fn to_proto_timestamp(&self) -> ProtoTimestamp;
+}
+
+#[cfg(feature = "jwt")]
+impl ToProtoTimestamp for chrono::DateTime<chrono::Utc> {
+    #[allow(clippy::cast_possible_truncation)]
+    fn to_proto_timestamp(&self) -> ProtoTimestamp {
+        ProtoTimestamp {
+            seconds: self.timestamp(),
+            nanos: self.timestamp_subsec_nanos() as i32,
+        }
+    }
+}
+
+/// Extension trait for converting `prost_types::Timestamp` to `chrono::DateTime<Utc>`.
+pub trait FromProtoTimestamp {
+    /// Convert from protobuf Timestamp.
+    ///
+    /// # Errors
+    /// Returns `None` if the timestamp is out of range.
+    fn from_proto_timestamp(ts: &ProtoTimestamp) -> Option<Self>
+    where
+        Self: Sized;
+}
+
+#[cfg(feature = "jwt")]
+impl FromProtoTimestamp for chrono::DateTime<chrono::Utc> {
+    #[allow(clippy::cast_sign_loss)]
+    fn from_proto_timestamp(ts: &ProtoTimestamp) -> Option<Self> {
+        chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+    }
+}
+
+// =============================================================================
+// Proto Duration Conversions
+// =============================================================================
+
+/// Extension trait for creating `prost_types::Duration` from seconds.
+pub trait ToProtoDuration {
+    /// Convert to protobuf Duration.
+    fn to_proto_duration(&self) -> ProtoDuration;
+}
+
+impl ToProtoDuration for u64 {
+    #[allow(clippy::cast_possible_wrap)]
+    fn to_proto_duration(&self) -> ProtoDuration {
+        ProtoDuration {
+            seconds: *self as i64,
+            nanos: 0,
+        }
+    }
+}
+
+impl ToProtoDuration for i64 {
+    fn to_proto_duration(&self) -> ProtoDuration {
+        ProtoDuration {
+            seconds: *self,
+            nanos: 0,
+        }
+    }
 }
 
 #[cfg(test)]
