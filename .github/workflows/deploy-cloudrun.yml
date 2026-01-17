@@ -81,7 +81,7 @@ jobs:
           #   S3_SECRET_ACCESS_KEY=S3_SECRET_ACCESS_KEY:latest
           #   MAILJET_API_KEY=MAILJET_API_KEY:latest
           #   MAILJET_API_SECRET=MAILJET_API_SECRET:latest
-          # env_vars_file: configs/production.env
+          env_vars_file: configs/production.env
           env_vars: |
             JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
             DB_URL=${{ secrets.DB_URL }}
@@ -93,7 +93,6 @@ jobs:
           # S3_SECRET_ACCESS_KEY=${{ secrets.S3_SECRET_ACCESS_KEY }}
           # MAILJET_API_SECRET=${{ secrets.MAILJET_API_SECRET }}
           flags: |
-            --env-vars-file=configs/production.env
             --allow-unauthenticated
             --use-http2
             --cpu=1
@@ -104,3 +103,4 @@ jobs:
             --timeout=60s
             --cpu-boost
             --session-affinity
+          # --env-vars-file=configs/production.env
