@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM auth.sessions\n             WHERE refresh_token = $1\n            RETURNING id_user\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id_user",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "68746b5ea8fb4bad3f2e3c2adaedede30a53d60196a5b97d5ab5d7fddddd2762"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.users\n               SET email_verified = TRUE\n             WHERE id = $1\n               AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "411d1838e59645578c3053aafb2616e762a73552e8309cec4b687c04ff3a788c"
+}

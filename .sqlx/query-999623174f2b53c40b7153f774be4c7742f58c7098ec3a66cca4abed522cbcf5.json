@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.user_profiles\n               SET display_name = $2,\n                   avatar_url = $3,\n                   locale = $4,\n                   timezone = $5\n             WHERE id_user = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "999623174f2b53c40b7153f774be4c7742f58c7098ec3a66cca4abed522cbcf5"
+}

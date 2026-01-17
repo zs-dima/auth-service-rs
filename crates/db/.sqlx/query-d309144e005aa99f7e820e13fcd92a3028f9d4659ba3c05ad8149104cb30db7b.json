@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.users\n               SET role = $2::TEXT::auth.role_name,\n                   email = $3::TEXT::auth.email,\n                   email_verified = $4,\n                   phone = $5::TEXT::auth.phone_e164,\n                   phone_verified = $6,\n                   status = $7::TEXT::auth.user_status\n             WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d309144e005aa99f7e820e13fcd92a3028f9d4659ba3c05ad8149104cb30db7b"
+}

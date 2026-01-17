@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.password_reset_tokens\n               SET used_at = NOW()\n             WHERE token_hash = $1\n               AND used_at IS NULL\n               AND expires_at > NOW()\n            RETURNING id_user\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id_user",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "addeac1901ac52286a741a56a60f3a2f4dda01a7293aaadf4e8b8f0fa76b0f9f"
+}

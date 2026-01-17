@@ -1,0 +1,33 @@
+[package]
+name = "auth-db"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Database layer with SQLx for auth services"
+
+[dependencies]
+# Core
+auth-core = { path = "../core" }
+auth-proto = { path = "../proto" }
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "macros", "json", "ipnetwork"] }
+
+# Utilities
+uuid = { version = "1.16", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ipnetwork = "0.20"
+
+# Async
+tokio-stream = "0.1"
+
+# gRPC (for Status in error conversions)
+tonic = "0.14"
+
+# Tracing
+tracing = "0.1"
+
+[lints]
+workspace = true

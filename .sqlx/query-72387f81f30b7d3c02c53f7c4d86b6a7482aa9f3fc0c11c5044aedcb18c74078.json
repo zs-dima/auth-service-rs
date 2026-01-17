@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.users\n               SET password = $2\n             WHERE email = $1\n               AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "72387f81f30b7d3c02c53f7c4d86b6a7482aa9f3fc0c11c5044aedcb18c74078"
+}

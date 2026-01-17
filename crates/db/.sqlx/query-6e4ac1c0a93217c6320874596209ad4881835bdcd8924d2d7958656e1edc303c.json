@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT u.id,\n                   u.role,\n                   u.email,\n                   p.display_name,\n                   (u.deleted_at IS NOT NULL) AS \"deleted!\"\n              FROM auth.users u\n              JOIN auth.user_profiles p ON p.id_user = u.id\n             ORDER BY p.display_name\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "deleted!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "6e4ac1c0a93217c6320874596209ad4881835bdcd8924d2d7958656e1edc303c"
+}

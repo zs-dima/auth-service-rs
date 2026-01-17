@@ -1,0 +1,28 @@
+[package]
+name = "auth-email"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# SMTP client - industry standard for Rust email
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
+# Async runtime
+tokio = { version = "1.49", features = ["rt"] }
+
+# Error handling
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+
+# URL parsing for SMTP_URL
+url = "2.5"
+urlencoding = "2.1"
+
+# Secret handling
+secrecy = "0.10"
+
+[lints]
+workspace = true

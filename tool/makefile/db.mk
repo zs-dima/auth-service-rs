@@ -7,18 +7,18 @@ export DATABASE_URL := $(subst :@,:$(DB_PASSWORD)@,$(DB_URL))
 
 # SQLx query verification
 db:
-	cargo sqlx prepare --check
+	cd crates/db && cargo sqlx prepare --check
 
 # Generate SQLx offline data
 db-prepare:
-	cargo sqlx prepare
+	cd crates/db && cargo sqlx prepare
 
 # Run database migrations
 db-migrate:
-	sqlx migrate run
+	sqlx migrate run --source crates/db/migrations --database-url "$(DATABASE_URL)"
 
 # Reset database (drop and recreate)
 db-reset:
-	sqlx database drop -y
-	sqlx database create
-	sqlx migrate run
+	sqlx database drop -y --database-url "$(DATABASE_URL)"
+	sqlx database create --database-url "$(DATABASE_URL)"
+	sqlx migrate run --source crates/db/migrations --database-url "$(DATABASE_URL)"

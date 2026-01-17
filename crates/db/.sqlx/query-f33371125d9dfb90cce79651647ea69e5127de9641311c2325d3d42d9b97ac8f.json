@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM auth.password_reset_tokens\n             WHERE expires_at < NOW() - INTERVAL '1 day'\n                OR used_at < NOW() - INTERVAL '1 day'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f33371125d9dfb90cce79651647ea69e5127de9641311c2325d3d42d9b97ac8f"
+}
