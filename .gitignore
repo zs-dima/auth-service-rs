@@ -4,8 +4,8 @@ Cargo.lock
 **/*.rs.bk
 
 # Environment files
-.env
-*.env
+configs/keys.env
+configs/development.env
 
 # Never commit environment files with real credentials!
 # Check your development.env before committing!

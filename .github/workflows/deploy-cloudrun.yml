@@ -1,0 +1,105 @@
+name: Deploy to Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        type: choice
+        required: true
+        default: staging
+        options:
+          - production
+          - staging
+          - development
+
+env:
+  PROJECT_ID: zs-auth-app
+  REGION: europe-west1
+  REPO: containers
+  SERVICE: auth-app-api
+  IMAGE: europe-west1-docker.pkg.dev/zs-auth-app/containers/auth-app-api:${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write # for Workload Identity Federation
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/CloudRun/Dockerfile
+          build-args: |
+            BIN=auth-service
+          push: true
+          tags: ${{ env.IMAGE }}
+          # Optional but makes CI fast:
+          cache-from: type=registry,ref=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.SERVICE }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.SERVICE }}:buildcache,mode=max
+
+      # Deploy to Cloud Run (official action)
+      - name: Deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}
+          project_id: ${{ env.PROJECT_ID }}
+          # Load config from file, secrets from GitHub
+          env_vars_file: configs/production.env
+          secrets: |
+            DB_PASSWORD=DB_PASSWORD:latest
+            S3_SECRET_ACCESS_KEY=S3_SECRET_ACCESS_KEY:latest
+            MAILJET_API_SECRET=MAILJET_API_SECRET:latest
+          #   JWT_SECRET_KEY=JWT_SECRET_KEY:latest
+          #   DB_URL=DB_URL:latest
+          #   DB_PASSWORD=DB_PASSWORD:latest
+          #   S3_URL=S3_URL:latest
+          #   S3_ACCESS_KEY_ID=S3_ACCESS_KEY_ID:latest
+          #   S3_SECRET_ACCESS_KEY=S3_SECRET_ACCESS_KEY:latest
+          #   MAILJET_API_KEY=MAILJET_API_KEY:latest
+          #   MAILJET_API_SECRET=MAILJET_API_SECRET:latest
+          env_vars: |
+            JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+            DB_URL=${{ secrets.DB_URL }}
+            S3_URL=${{ secrets.S3_URL }}
+            S3_ACCESS_KEY_ID=${{ secrets.S3_ACCESS_KEY_ID }}
+            MAILJET_API_KEY=${{ secrets.MAILJET_API_KEY }}
+          # DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          # S3_SECRET_ACCESS_KEY=${{ secrets.S3_SECRET_ACCESS_KEY }}
+          # MAILJET_API_SECRET=${{ secrets.MAILJET_API_SECRET }}
+          flags: |
+            --allow-unauthenticated
+            --use-http2
+            --cpu=1
+            --memory=512Mi
+            --min-instances=0
+            --max-instances=10
+            --concurrency=100
+            --timeout=60s
+            --cpu-boost
+            --session-affinity
