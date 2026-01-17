@@ -62,11 +62,11 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.SERVICE }}:buildcache,mode=max
 
       # Read env file: strip comments (both full-line and inline) and empty lines
-      - name: Load env vars from file
-        id: envfile
-        run: |
-          ENV_VARS=$(grep -v '^\s*#' configs/production.env | sed 's/\s*#.*//' | grep -v '^\s*$' | grep '=' | tr '\n' ',')
-          echo "vars=${ENV_VARS}" >> $GITHUB_OUTPUT
+      # - name: Load env vars from file
+      #   id: envfile
+      #   run: |
+      #     ENV_VARS=$(grep -v '^\s*#' configs/production.env | sed 's/\s*#.*//' | grep -v '^\s*$' | grep '=' | tr '\n' ',')
+      #     echo "vars=${ENV_VARS}" >> $GITHUB_OUTPUT
 
       # Deploy to Cloud Run (official action)
       - name: Deploy
@@ -77,7 +77,7 @@ jobs:
           image: ${{ env.IMAGE }}
           project_id: ${{ env.PROJECT_ID }}
           # Deprecated: Load config from file, secrets from GitHub
-          # env_vars_file: configs/production.env
+          env_vars_file: configs/production.env
           secrets: |
             DB_PASSWORD=DB_PASSWORD:latest
             S3_SECRET_ACCESS_KEY=S3_SECRET_ACCESS_KEY:latest
@@ -91,12 +91,12 @@ jobs:
           #   MAILJET_API_KEY=MAILJET_API_KEY:latest
           #   MAILJET_API_SECRET=MAILJET_API_SECRET:latest
           env_vars: |
-            ${{ steps.envfile.outputs.vars }}
             JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
             DB_URL=${{ secrets.DB_URL }}
             S3_URL=${{ secrets.S3_URL }}
             S3_ACCESS_KEY_ID=${{ secrets.S3_ACCESS_KEY_ID }}
             MAILJET_API_KEY=${{ secrets.MAILJET_API_KEY }}
+          # ${{ steps.envfile.outputs.vars }}
           # DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           # S3_SECRET_ACCESS_KEY=${{ secrets.S3_SECRET_ACCESS_KEY }}
           # MAILJET_API_SECRET=${{ secrets.MAILJET_API_SECRET }}
