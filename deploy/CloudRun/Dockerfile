@@ -4,6 +4,9 @@
 FROM rust:1.92-bookworm AS build
 WORKDIR /app
 
+# Install protoc for prost-build
+RUN apt-get update && apt-get install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*
+
 # Binary name (configurable via build-arg)
 ARG BIN=auth-service
 
