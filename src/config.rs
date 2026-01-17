@@ -39,6 +39,10 @@ fn resolve_secret(file_path: Option<&str>, direct_value: Option<&str>) -> Option
 #[derive(Debug, Clone, Parser)]
 #[command(name = "auth-service", about = "Authentication gRPC service")]
 pub struct Config {
+    /// Cloud Run PORT (takes precedence over GRPC_ADDRESS)
+    #[arg(long, env = "PORT")]
+    pub port: Option<u16>,
+
     /// Server address (gRPC + REST on single port)
     #[arg(long, env = "GRPC_ADDRESS", default_value = "0.0.0.0:50051")]
     pub grpc_address: String,
@@ -342,6 +346,17 @@ impl Config {
         Duration::from_secs(self.db_connect_timeout_secs)
     }
 
+    /// Get effective server address.
+    ///
+    /// Cloud Run's `PORT` env var takes precedence over `GRPC_ADDRESS`.
+    #[must_use]
+    pub fn server_address(&self) -> String {
+        match self.port {
+            Some(port) => format!("0.0.0.0:{port}"),
+            None => self.grpc_address.clone(),
+        }
+    }
+
     /// Build the database URL with password substitution.
     #[must_use]
     pub fn database_url(&self) -> String {
@@ -415,6 +430,7 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
+            port: None,
             grpc_address: "0.0.0.0:50051".to_string(),
             grpc_web: true,
             cors_allow_origins: None,
@@ -514,6 +530,19 @@ mod tests {
     fn email_disabled_when_missing_config() {
         let config = test_config();
         assert!(!config.email_enabled());
+    }
+
+    #[test]
+    fn server_address_uses_port_when_set() {
+        let mut config = test_config();
+        config.port = Some(8080);
+        assert_eq!(config.server_address(), "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn server_address_uses_grpc_address_when_port_not_set() {
+        let config = test_config();
+        assert_eq!(config.server_address(), "0.0.0.0:50051");
     }
 
     #[test]

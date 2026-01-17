@@ -86,8 +86,8 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
         info!("GeoIP service disabled (no database configured)");
     }
 
-    // Server address
-    let addr: SocketAddr = config.grpc_address.parse()?;
+    // Server address (PORT env var for Cloud Run, or GRPC_ADDRESS)
+    let addr: SocketAddr = config.server_address().parse()?;
 
     // Get domain for email links (defaults to "localhost" if not configured)
     let domain = config.domain.clone().or_str("localhost");
