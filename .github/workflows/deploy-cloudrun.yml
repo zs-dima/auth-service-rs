@@ -61,11 +61,11 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.SERVICE }}:buildcache
           cache-to: type=registry,ref=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.SERVICE }}:buildcache,mode=max
 
-      # Read env file (filtering comments and empty lines)
+      # Read env file: strip comments (both full-line and inline) and empty lines
       - name: Load env vars from file
         id: envfile
         run: |
-          ENV_VARS=$(grep -v '^#' configs/production.env | grep -v '^$' | grep '=' | tr '\n' ',')
+          ENV_VARS=$(sed 's/#.*//' configs/production.env | grep -v '^[[:space:]]*$' | grep '=' | tr '\n' ',')
           echo "vars=${ENV_VARS}" >> $GITHUB_OUTPUT
 
       # Deploy to Cloud Run (official action)
