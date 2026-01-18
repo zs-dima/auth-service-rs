@@ -53,7 +53,7 @@ pub struct AppState {
 ///
 /// # Panics
 /// Panics if JWT secret is not configured (validated in `Config::init`).
-#[allow(clippy::similar_names)]
+#[allow(clippy::similar_names, clippy::too_many_lines)]
 pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> {
     // Create shared JWT validator once
     let jwt_secret = config

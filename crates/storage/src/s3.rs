@@ -142,13 +142,26 @@ impl S3Storage {
     }
 
     /// Check if S3 bucket is accessible.
+    ///
+    /// Uses `HeadObject` on a non-existent key instead of `HeadBucket`
+    /// because `HeadBucket` requires `s3:ListBucket` permission.
+    /// A 404 response proves connectivity and authentication work.
     pub async fn health_check(&self) -> bool {
-        self.client
-            .head_bucket()
+        match self
+            .client
+            .head_object()
             .bucket(&self.bucket)
+            .key(".health-check")
             .send()
             .await
-            .is_ok()
+        {
+            Ok(_) => true,
+            Err(SdkError::ServiceError(err)) => {
+                // 404 Not Found means bucket is accessible, object just doesn't exist
+                matches!(err.err(), HeadObjectError::NotFound(_))
+            }
+            Err(_) => false,
+        }
     }
 
     fn avatar_key(user_id: &Uuid) -> String {

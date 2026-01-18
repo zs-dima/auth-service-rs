@@ -1,0 +1,211 @@
+version: "3.9"
+
+x-logging: &loki-logging
+  driver: loki
+  options:
+    max-size: "12m"
+    max-file: "5"
+    loki-url: "http://127.0.0.1:3100/loki/api/v1/push"
+    loki-retries: "5"
+    loki-batch-size: "400"
+    loki-pipeline-stages: |
+      - json:
+          expressions:
+            level: level
+            path: path
+            method: method
+            msg: msg
+      - labels:
+          msg: 
+          level:
+          path:
+          method:
+
+x-common: &default-keys
+  networks:
+    - public
+    - monitor
+  restart: always
+  security_opt:
+    - no-new-privileges:true
+  logging: *loki-logging
+
+x-deploy: &deploy-app
+  mode: replicated
+  replicas: 1
+  restart_policy:
+    condition: on-failure
+  resources:
+    limits:
+      memory: 1024M
+    reservations:
+      memory: 128M
+
+x-environment: &default-tz-puid-pgid
+  TZ: $TZ
+  PUID: $PUID
+  PGID: $PGID
+
+services:
+  auth-service:
+    <<: *default-keys
+    hostname: auth-service
+    image: ghcr.io/zs-dima/auth-service-rs@sha256:2f9894fe1b8782e896299efadf3b9fd98d1b0415f6c7950e950e2615d7a244c5
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - light-auth-service-data:/var/lib/keys
+    secrets:
+      - light-auth-jwt-secret-key
+      - light-auth-db-password
+      - s3-secret-access-key
+      - mailjet-api-secret
+    environment:
+      - ENVIRONMENT=production
+      - DOMAIN=auth-demo.$DOMAIN
+      - GRPC_ADDRESS=[::]:8000
+      - GRPC_WEB=true
+      - GRPC_API_REFLECTION=false
+      - CORS_ALLOW_ORIGINS=*
+      - JWT_SECRET_KEY_FILE=/run/secrets/light-auth-jwt-secret-key
+      - DB_URL=postgresql://admin:@light-auth-db:5433/light-auth
+      - DB_PASSWORD_FILE=/run/secrets/light-auth-db-password
+      - S3_SECRET_ACCESS_KEY_FILE=/run/secrets/s3-secret-access-key
+      - MAILJET_API_SECRET_FILE=/run/secrets/mailjet-api-secret
+      - DISABLE_METRICS=true
+      - ACCESS_TOKEN_TTL_MINUTES=60
+      - REFRESH_TOKEN_TTL_DAYS=90
+      - PASSWORD_RESET_TTL_MINUTES=60
+      - EMAIL_VERIFICATION_TTL_HOURS=24
+      - LOG_LEVEL=INFO
+      - JSON_LOGS=true
+      - BACKTRACE=0
+      - CONCURRENCY_LIMIT=100
+      - MAX_PHOTO_BYTES=2097152
+      - DB_POOL_MIN=2
+      - DB_POOL_MAX=10
+      - DB_CONNECT_TIMEOUT=30
+      - EMAIL_PROVIDER=mailjet
+      - EMAIL_SENDER="Auth Robot <no-reply@dmitrii.app>"
+      - MAILJET_WELCOME_TEMPLATE_ID=7654682
+      - MAILJET_PASSWORD_RESET_TEMPLATE_ID=7654629
+      - MAILJET_PASSWORD_CHANGED_TEMPLATE_ID=7654700
+    # Health checks: Traefik probes /health endpoint (scratch image has no shell)
+    deploy:
+      <<: *deploy-app
+      labels:
+        - org.label-schema.group=light-auth
+        ####################################################################
+        # Auth service (gRPC + gRPC-Web + REST on single port)
+        ####################################################################
+        - traefik.enable=true
+        - traefik.http.routers.auth-service.entrypoints=https
+        - traefik.http.routers.auth-service.rule=Host(`auth-demo-api.${DOMAIN}`)
+        - traefik.http.routers.auth-service.tls=true
+        - traefik.http.routers.auth-service.tls.certresolver=le
+
+        # Service: h2c for HTTP/2 cleartext (internal)
+        - traefik.http.routers.auth-service.service=auth-service
+        - traefik.http.services.auth-service.loadbalancer.server.port=8000
+        - traefik.http.services.auth-service.loadbalancer.server.scheme=h2c
+
+        # Health check for load balancer
+        - traefik.http.services.auth-service.loadbalancer.healthcheck.path=/health
+        - traefik.http.services.auth-service.loadbalancer.healthcheck.interval=10s
+
+        # Middleware chain (security must run before grpcweb for CORS headers)
+        - traefik.http.routers.auth-service.middlewares=auth-service-cors@swarm,auth-service-grpcweb@swarm,auth-service-security@swarm,auth-service-ratelimit@swarm
+
+        # Middleware: gRPC-Web (converts browser requests to gRPC, CORS handled separately)
+        - traefik.http.middlewares.auth-service-grpcweb.grpcweb.allowOrigins=
+
+        # Middleware: CORS headers for gRPC-Web
+        - traefik.http.middlewares.auth-service-cors.headers.accessControlAllowOriginListRegex=https://.*\.${DOMAIN}|https://${DOMAIN}
+        - traefik.http.middlewares.auth-service-cors.headers.accessControlAllowMethods=GET,POST,OPTIONS
+        - traefik.http.middlewares.auth-service-cors.headers.accessControlAllowHeaders=Accept-Language,Authorization,Content-Type,refresh-token,X-App-Build-Timestamp,X-App-Launched-Timestamp,X-App-Name,X-App-Version,X-App-Version-Major,X-App-Version-Minor,X-App-Version-Patch,X-Device-Screen-Size,X-Environment,X-Grpc-Web,X-Is-Release,X-Locale,X-Operating-System,X-Platform,X-Processors-Count,X-Request-Id,X-Requested-With,X-User-Agent
+        - traefik.http.middlewares.auth-service-cors.headers.accessControlExposeHeaders=Grpc-Status,Grpc-Message,Grpc-Encoding,Grpc-Accept-Encoding,grpc-status,grpc-message
+        - traefik.http.middlewares.auth-service-cors.headers.accessControlAllowCredentials=true
+        - traefik.http.middlewares.auth-service-cors.headers.accessControlMaxAge=7200
+        - traefik.http.middlewares.auth-service-cors.headers.addVaryHeader=true
+
+        # Middleware: Security headers (non-CORS security settings)
+        - traefik.http.middlewares.auth-service-security.headers.customRequestHeaders.te=trailers
+        - traefik.http.middlewares.auth-service-security.headers.frameDeny=true
+        - traefik.http.middlewares.auth-service-security.headers.contentTypeNosniff=true
+        - traefik.http.middlewares.auth-service-security.headers.browserXssFilter=true
+        - traefik.http.middlewares.auth-service-security.headers.referrerPolicy=strict-origin-when-cross-origin
+
+        # Middleware: Rate limiting (adjust based on traffic)
+        - traefik.http.middlewares.auth-service-ratelimit.ratelimit.average=100
+        - traefik.http.middlewares.auth-service-ratelimit.ratelimit.burst=50
+        - traefik.http.middlewares.auth-service-ratelimit.ratelimit.period=1s
+        ####################################################################
+
+  light-auth-db:
+    <<: *default-keys
+    hostname: light-auth-db
+    image: postgres:latest
+    ports:
+      - 5433:5433
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - light-auth-db-data:/var/lib/postgresql/data:rw
+    environment:
+      - PGPORT=5433
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=$DB_PASSWORD
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_DB=light-auth
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d light-auth -p 5433"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      <<: *deploy-app
+      labels:
+        - org.label-schema.group=light-auth
+        ####################################################################
+        # Database: Internal only, no external Traefik routing needed
+        ####################################################################
+        # - traefik.enable=false
+        ####################################################################
+        # --- OR ---
+        ####################################################################
+        # Light auth database
+        ####################################################################
+        - traefik.enable=true
+        - traefik.tcp.routers.light-auth-db.entrypoints=web
+        - traefik.tcp.routers.light-auth-db.rule=HostSNI(`*`)
+        - traefik.tcp.routers.light-auth-db.tls=false
+
+        # Port traefik needs to route traffic to
+        - traefik.tcp.routers.light-auth-db.service=light-auth-db
+        - traefik.tcp.services.light-auth-db.loadbalancer.server.port=5433
+        ####################################################################
+
+networks:
+  public:
+    external: true
+    attachable: true
+    driver: overlay
+  monitor:
+    external: false
+
+volumes:
+  light-auth-service-data:
+  light-auth-db-data:
+    external: true
+
+# Docker Swarm secrets (create with: docker secret create <name> <file>)
+secrets:
+  jwt_secret_key:
+    external: true
+  db_password:
+    external: true
+  s3_secret_access_key:
+    external: true
+  smtp_password:
+    external: true
+  mailjet_api_secret:
+    external: true

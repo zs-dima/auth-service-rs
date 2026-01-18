@@ -84,6 +84,8 @@ pub struct SessionTokens {
     pub access_token: String,
     /// Long-lived token for obtaining new access tokens.
     pub refresh_token: String,
+    /// Access token expiration time (when the access token becomes invalid).
+    pub access_token_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Validated authentication info from JWT.
@@ -232,6 +234,7 @@ impl JwtValidator {
     /// # Errors
     /// Returns `AppError::Internal` if JWT encoding fails.
     /// Returns `AppError::InvalidArgument` if TTL exceeds maximum.
+    #[allow(clippy::cast_possible_wrap)] // Safe: ttl_minutes bounded by MAX_TTL_MINUTES (< i64::MAX)
     pub fn generate_access_token<T: JwtSubject>(
         &self,
         subject: &T,

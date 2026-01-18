@@ -68,6 +68,8 @@ make run
 
 | Variable              | Default         | Description                              |
 | --------------------- | --------------- | ---------------------------------------- |
+| `PORT`                | —               | Overrides `GRPC_ADDRESS` (optional)      |
+| `REST_ADDRESS`        | —               | Not used, for future port separation     |
 | `GRPC_ADDRESS`        | `0.0.0.0:50051` | Server bind address                      |
 | `GRPC_WEB`            | `true`          | Enable gRPC-Web (HTTP/1.1)               |
 | `GRPC_API_REFLECTION` | `false`         | Enable gRPC reflection                   |
@@ -78,9 +80,9 @@ make run
 
 | Variable                       | Default | Description                |
 | ------------------------------ | ------- | -------------------------- |
-| `ACCESS_TOKEN_TTL_MINUTES`     | `15`    | Access token lifetime      |
-| `REFRESH_TOKEN_TTL_DAYS`       | `7`     | Refresh token lifetime     |
-| `PASSWORD_RESET_TTL_MINUTES`   | `30`    | Password reset link expiry |
+| `ACCESS_TOKEN_TTL_MINUTES`     | `60`    | Access token lifetime      |
+| `REFRESH_TOKEN_TTL_DAYS`       | `90`    | Refresh token lifetime     |
+| `PASSWORD_RESET_TTL_MINUTES`   | `60`    | Password reset link expiry |
 | `EMAIL_VERIFICATION_TTL_HOURS` | `24`    | Email verification expiry  |
 
 ### Database
@@ -128,6 +130,85 @@ make run
 All secrets support `*_FILE` variants for Docker/Kubernetes secrets:
 - `JWT_SECRET_KEY_FILE`, `DB_PASSWORD_FILE`, `S3_SECRET_ACCESS_KEY_FILE`
 - `SMTP_PASSWORD_FILE`, `MAILJET_API_SECRET_FILE`
+
+## Authentication Flows
+
+### Email Verification
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Client
+    participant S as Auth Service
+    participant DB as Database
+    participant E as Email Service
+
+    U->>C: Sign Up (email, password)
+    C->>S: SignUp RPC
+    S->>DB: Create user (unverified)
+    S->>DB: Create verification token
+    S-->>E: Send verification email
+    S-->>C: AuthResponse (tokens)
+    C-->>U: Welcome! Check email
+
+    Note over E,U: Email with verification link
+
+    U->>S: Click link /verify-email?token=xxx
+    S->>DB: Consume token (validate + delete)
+    S->>DB: Mark email as verified
+    S-->>U: 302 Redirect → Success page
+```
+
+### Password Recovery
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Client
+    participant S as Auth Service
+    participant DB as Database
+    participant E as Email Service
+
+    U->>C: Forgot password (email)
+    C->>S: RecoveryStart RPC
+    Note over S: Always returns OK (OWASP)
+    S-->>C: OK
+    
+    par Background task
+        S->>DB: Find user by email
+        S->>DB: Create reset token
+        S-->>E: Send reset email
+    end
+    C-->>U: Check your email
+
+    Note over E,U: Email with reset link
+
+    U->>C: Enter new password + token
+    C->>S: RecoveryConfirm RPC
+    S->>DB: Validate & consume token
+    S->>DB: Update password
+    S->>DB: Revoke all sessions
+    S-->>C: OK
+    C-->>U: Password changed
+```
+
+### Password Change (Authenticated)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Client
+    participant S as Auth Service
+    participant DB as Database
+
+    U->>C: Change password (current, new)
+    C->>S: ChangePassword RPC + JWT
+    S->>DB: Verify current password
+    S->>DB: Update password
+    S->>DB: Revoke other sessions
+    S-->>C: OK
+    C-->>U: Password changed
+```
 
 ## API Overview
 

@@ -39,7 +39,7 @@ fn resolve_secret(file_path: Option<&str>, direct_value: Option<&str>) -> Option
 #[derive(Debug, Clone, Parser)]
 #[command(name = "auth-service", about = "Authentication gRPC service")]
 pub struct Config {
-    /// Cloud Run PORT (takes precedence over GRPC_ADDRESS)
+    /// Cloud Run `PORT` (takes precedence over `GRPC_ADDRESS`).
     #[arg(long, env = "PORT")]
     pub port: Option<u16>,
 
@@ -98,15 +98,15 @@ pub struct Config {
     // Token TTLs
     // =========================================================================
     /// Access token TTL in minutes
-    #[arg(long, env = "ACCESS_TOKEN_TTL_MINUTES", default_value = "15")]
+    #[arg(long, env = "ACCESS_TOKEN_TTL_MINUTES", default_value = "60")]
     pub access_token_ttl_minutes: u64,
 
     /// Refresh token TTL in days
-    #[arg(long, env = "REFRESH_TOKEN_TTL_DAYS", default_value = "7")]
+    #[arg(long, env = "REFRESH_TOKEN_TTL_DAYS", default_value = "90")]
     pub refresh_token_ttl_days: i64,
 
-    /// Password reset token expiration in minutes (default: 30)
-    #[arg(long, env = "PASSWORD_RESET_TTL_MINUTES", default_value = "30")]
+    /// Password reset token expiration in minutes (default: 60)
+    #[arg(long, env = "PASSWORD_RESET_TTL_MINUTES", default_value = "60")]
     pub password_reset_ttl_minutes: u32,
 
     /// Email verification token expiration in hours (default: 24)

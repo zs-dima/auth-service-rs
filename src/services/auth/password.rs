@@ -14,6 +14,7 @@ use crate::core::password;
 impl AuthService {
     /// Starts password recovery by creating a reset token and sending email.
     /// Always returns success to prevent user enumeration (OWASP).
+    #[allow(clippy::unused_async)] // Async needed for trait impl, actual work spawned
     pub(super) async fn recovery_start(&self, req: RecoveryStartRequest) -> Result<(), Status> {
         req.validate_or_status()?;
 

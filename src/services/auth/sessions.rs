@@ -55,17 +55,17 @@ impl AuthService {
         Ok(ListSessionsResponse { sessions })
     }
 
-    /// Converts JSON value to HashMap<String, String> for proto metadata.
+    /// Converts JSON value to `HashMap<String, String>` for proto metadata.
     fn json_to_string_map(value: serde_json::Value) -> std::collections::HashMap<String, String> {
         match value {
             serde_json::Value::Object(map) => map
                 .into_iter()
-                .filter_map(|(k, v)| {
+                .map(|(k, v)| {
                     let s = match v {
                         serde_json::Value::String(s) => s,
                         other => other.to_string(),
                     };
-                    Some((k, s))
+                    (k, s)
                 })
                 .collect(),
             _ => std::collections::HashMap::new(),

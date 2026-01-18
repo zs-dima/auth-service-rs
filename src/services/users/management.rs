@@ -21,8 +21,7 @@ use crate::core::{canonical_email, canonical_phone, password};
 
 impl UserService {
     /// Streams user info (admin only).
-    #[allow(clippy::needless_pass_by_value)]
-    pub(super) fn list_users_info(&self, req: ListUsersRequest) -> StreamResult<ProtoUserInfo> {
+    pub(super) fn list_users_info(&self, req: &ListUsersRequest) -> StreamResult<ProtoUserInfo> {
         let user_ids: Vec<Uuid> = req
             .user_ids
             .iter()
@@ -211,16 +210,13 @@ impl UserService {
             .transpose()?
             .unwrap_or(existing.role.as_str());
 
-        let status = req
-            .status
-            .map(|s| match s {
-                s if s == ProtoUserStatus::Pending as i32 => UserStatus::Pending,
-                s if s == ProtoUserStatus::Active as i32 => UserStatus::Active,
-                s if s == ProtoUserStatus::Suspended as i32 => UserStatus::Suspended,
-                s if s == ProtoUserStatus::Deleted as i32 => UserStatus::Deleted,
-                _ => existing.status,
-            })
-            .unwrap_or(existing.status);
+        let status = req.status.map_or(existing.status, |s| match s {
+            s if s == ProtoUserStatus::Pending as i32 => UserStatus::Pending,
+            s if s == ProtoUserStatus::Active as i32 => UserStatus::Active,
+            s if s == ProtoUserStatus::Suspended as i32 => UserStatus::Suspended,
+            s if s == ProtoUserStatus::Deleted as i32 => UserStatus::Deleted,
+            _ => existing.status,
+        });
 
         let name = req.name.as_deref().unwrap_or(&existing.display_name);
         let locale = req.locale.as_deref().unwrap_or(&existing.locale);

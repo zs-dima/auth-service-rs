@@ -1,4 +1,51 @@
 //! REST routes and health check handlers.
+//!
+//! This module provides REST endpoints for the auth service. While the primary API
+//! is gRPC, these REST endpoints serve specific purposes:
+//!
+//! # Endpoints
+//!
+//! ## Health Checks (Kubernetes probes)
+//!
+//! | Endpoint | Method | Description |
+//! |----------|--------|-------------|
+//! | `/` | GET | Service identity - returns `"auth-service"` |
+//! | `/health` | GET | Simple liveness - returns `"OK"` |
+//! | `/health/live` | GET | Kubernetes liveness probe - returns `"OK"` |
+//! | `/health/ready` | GET | Kubernetes readiness probe with dependency checks |
+//!
+//! ## Email Verification
+//!
+//! | Endpoint | Method | Description |
+//! |----------|--------|-------------|
+//! | `/verify-email?token=xxx` | GET | Email verification link handler (302 redirect) |
+//!
+//! ## Metrics (optional)
+//!
+//! | Endpoint | Method | Description |
+//! |----------|--------|-------------|
+//! | `/metrics` | GET | Prometheus metrics (when enabled) |
+//!
+//! # Health Check Response
+//!
+//! The `/health/ready` endpoint returns a JSON response with component health:
+//!
+//! ```json
+//! {
+//!   "status": "healthy",
+//!   "version": "0.1.0",
+//!   "checks": {
+//!     "database": { "status": "healthy" },
+//!     "storage": { "status": "healthy" }
+//!   }
+//! }
+//! ```
+//!
+//! # Email Verification Flow
+//!
+//! 1. User clicks verification link in email: `https://domain/verify-email?token=xxx`
+//! 2. Backend validates token and marks email as verified
+//! 3. User is redirected to frontend success/error page
 
 use auth_core::TokenGenerator;
 use auth_telemetry::PrometheusHandle;

@@ -16,7 +16,7 @@ mod tokens;
 
 use std::sync::Arc;
 
-use auth_core::{SessionTokens, StatusExt, StrExt, TokenGenerator};
+use auth_core::{SessionTokens, StatusExt, StrExt, ToProtoTimestamp, TokenGenerator};
 use auth_db::{UserWithProfile, role_to_proto, status_to_proto};
 use auth_proto::auth::{
     AuthResponse, AuthStatus, ClientInfo, IdentifierType, TokenPair, UserSnapshot,
@@ -161,7 +161,8 @@ impl AuthService {
 // ============================================================================
 
 impl AuthService {
-    /// Creates session and returns tokens.
+    /// Creates session and returns tokens with expiration.
+    #[allow(clippy::cast_possible_wrap)] // Safe: TTL in minutes is bounded config value
     async fn create_session(
         &self,
         user: &UserWithProfile,
@@ -171,6 +172,10 @@ impl AuthService {
         let device_id = ctx
             .device_id()
             .ok_or_else(|| Status::invalid_argument("Missing device_id"))?;
+
+        // Calculate access token expiration
+        let access_token_expires_at = chrono::Utc::now()
+            + chrono::Duration::minutes(self.config.access_token_ttl_minutes as i64);
 
         let access_token = self
             .config
@@ -183,7 +188,7 @@ impl AuthService {
             )
             .status("Failed to generate access token")?;
 
-        let (refresh_token, expires_at) =
+        let (refresh_token, session_expires_at) =
             TokenGenerator::generate_refresh_token(self.config.refresh_token_ttl_days)
                 .status("Failed to generate refresh token")?;
 
@@ -196,7 +201,7 @@ impl AuthService {
             .create_session(ctx.to_session_params(
                 user.id,
                 &refresh_token_hash,
-                expires_at,
+                session_expires_at,
                 metadata,
             ))
             .await
@@ -205,6 +210,7 @@ impl AuthService {
         Ok(SessionTokens {
             access_token,
             refresh_token,
+            access_token_expires_at,
         })
     }
 
@@ -251,7 +257,7 @@ impl AuthService {
             tokens: Some(TokenPair {
                 access_token: tokens.access_token,
                 refresh_token: tokens.refresh_token,
-                expires_at: None, // TODO: Add expiration timestamp
+                expires_at: Some(tokens.access_token_expires_at.to_proto_timestamp()),
             }),
             user: Some(UserSnapshot {
                 user_id: Some(auth_core::ToProtoUuid::to_proto(&user.id)),

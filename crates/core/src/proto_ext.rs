@@ -164,7 +164,7 @@ pub trait ToProtoTimestamp {
 
 #[cfg(feature = "jwt")]
 impl ToProtoTimestamp for chrono::DateTime<chrono::Utc> {
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn to_proto_timestamp(&self) -> ProtoTimestamp {
         ProtoTimestamp {
             seconds: self.timestamp(),

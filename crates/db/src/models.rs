@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 /// User status enum matching `PostgreSQL` `auth.user_status`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "user_status", rename_all = "lowercase")]
+#[sqlx(type_name = "auth.user_status", rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum UserStatus {
     Pending,
@@ -44,7 +44,7 @@ impl std::fmt::Display for UserStatus {
 
 /// OAuth provider enum matching `PostgreSQL` `auth.oauth_provider`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "oauth_provider", rename_all = "lowercase")]
+#[sqlx(type_name = "auth.oauth_provider", rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum OAuthProvider {
     Google,

@@ -39,5 +39,6 @@ ENV GEOIP_DB_PATH=/assets/GeoLite2-Country.mmdb
 # Standard path for CA certificates (used by rustls/native-tls)
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
+# Cloud Run default port (overridable via PORT or GRPC_ADDRESS env var)
 EXPOSE 8080
 ENTRYPOINT ["/service"]

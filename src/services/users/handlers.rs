@@ -30,7 +30,7 @@ impl UserServiceTrait for UserService {
         let admin = request.auth_admin()?;
         tracing::Span::current().record("user_id", admin.user_id.to_string());
 
-        let req = request.into_inner();
+        let req = request.get_ref();
         req.validate_or_status()?;
 
         let stream = self.list_users_info(req);

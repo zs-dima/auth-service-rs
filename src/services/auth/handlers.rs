@@ -2,19 +2,18 @@
 //!
 //! Thin handlers that extract auth/context and delegate to domain methods.
 
-use auth_core::{RequestAuthExt, TokenGenerator, ValidateExt};
+use auth_core::{RequestAuthExt, ToProtoTimestamp, TokenGenerator, ValidateExt};
 use auth_proto::auth::auth_service_server::AuthService as AuthServiceTrait;
 use auth_proto::auth::{
     AuthResponse, AuthenticateRequest, ChangePasswordRequest, ConfirmMfaSetupRequest,
     ConfirmMfaSetupResponse, ConfirmVerificationRequest, DisableMfaRequest,
     ExchangeOAuthCodeRequest, GetMfaStatusRequest, GetMfaStatusResponse, GetOAuthUrlRequest,
     GetOAuthUrlResponse, LinkOAuthProviderRequest, ListLinkedProvidersRequest,
-    ListLinkedProvidersResponse, ListSessionsRequest, ListSessionsResponse,
-    RecoveryConfirmRequest, RecoveryStartRequest, RefreshTokensRequest,
-    RequestVerificationRequest, RevokeOtherSessionsRequest, RevokeSessionRequest,
-    RevokeSessionsResponse, SetupMfaRequest, SetupMfaResponse, SignOutRequest, SignUpRequest,
-    TokenPair, UnlinkOAuthProviderRequest, ValidateCredentialsRequest,
-    ValidateCredentialsResponse, VerifyMfaRequest,
+    ListLinkedProvidersResponse, ListSessionsRequest, ListSessionsResponse, RecoveryConfirmRequest,
+    RecoveryStartRequest, RefreshTokensRequest, RequestVerificationRequest,
+    RevokeOtherSessionsRequest, RevokeSessionRequest, RevokeSessionsResponse, SetupMfaRequest,
+    SetupMfaResponse, SignOutRequest, SignUpRequest, TokenPair, UnlinkOAuthProviderRequest,
+    ValidateCredentialsRequest, ValidateCredentialsResponse, VerifyMfaRequest,
 };
 use tonic::{Request, Response, Status};
 use tracing::instrument;
@@ -90,7 +89,7 @@ impl AuthServiceTrait for AuthService {
         Ok(Response::new(TokenPair {
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
-            expires_at: None, // TODO: Add expiration timestamp
+            expires_at: Some(tokens.access_token_expires_at.to_proto_timestamp()),
         }))
     }
 
@@ -101,7 +100,10 @@ impl AuthServiceTrait for AuthService {
     ) -> Result<Response<ValidateCredentialsResponse>, Status> {
         let auth = request.auth()?;
         let valid = self.validate_credentials(auth.user_id).await?;
-        Ok(Response::new(ValidateCredentialsResponse { valid, user: None }))
+        Ok(Response::new(ValidateCredentialsResponse {
+            valid,
+            user: None,
+        }))
     }
 
     // ========================================================================
@@ -281,7 +283,10 @@ impl AuthServiceTrait for AuthService {
     }
 
     #[instrument(skip(self, _request))]
-    async fn disable_mfa(&self, _request: Request<DisableMfaRequest>) -> Result<Response<()>, Status> {
+    async fn disable_mfa(
+        &self,
+        _request: Request<DisableMfaRequest>,
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("MFA not yet implemented"))
     }
 }
