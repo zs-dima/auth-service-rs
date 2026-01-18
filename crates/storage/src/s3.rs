@@ -146,12 +146,13 @@ impl S3Storage {
     /// Uses `HeadObject` on a non-existent key instead of `HeadBucket`
     /// because `HeadBucket` requires `s3:ListBucket` permission.
     /// A 404 response proves connectivity and authentication work.
+    /// Key is under `users/` path to match IAM policy restrictions.
     pub async fn health_check(&self) -> bool {
         match self
             .client
             .head_object()
             .bucket(&self.bucket)
-            .key(".health-check")
+            .key("users/.health-check")
             .send()
             .await
         {
