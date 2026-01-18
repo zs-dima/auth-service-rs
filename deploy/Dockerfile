@@ -4,7 +4,7 @@
 FROM rust:1.92-alpine AS build
 WORKDIR /app
 
-RUN apk add --no-cache musl-dev protobuf-dev
+RUN apk add --no-cache musl-dev protobuf-dev ca-certificates
 
 ARG BIN=auth-service
 
@@ -28,11 +28,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # scratch: 0 bytes base, smallest possible image
 FROM scratch
 
+# CA certificates for TLS (required for HTTPS: gRPC, S3, Mailjet, DB)
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 COPY --from=build /service /service
 COPY --from=build /app/assets/GeoLite2-Country.mmdb /assets/GeoLite2-Country.mmdb
 
 ENV RUST_LOG=info
 ENV GEOIP_DB_PATH=/assets/GeoLite2-Country.mmdb
+# Standard path for CA certificates (used by rustls/native-tls)
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 EXPOSE 8080
 ENTRYPOINT ["/service"]
