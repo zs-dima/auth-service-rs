@@ -1,0 +1,130 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id AS \"id!\",\n                   role AS \"role!\",\n                   email,\n                   email_verified AS \"email_verified!\",\n                   phone,\n                   phone_verified AS \"phone_verified!\",\n                   status AS \"status!: _\",\n                   password,\n                   failed_login_attempts AS \"failed_login_attempts!\",\n                   locked_until,\n                   created_at AS \"created_at!\",\n                   updated_at AS \"updated_at!\",\n                   deleted_at,\n                   display_name AS \"display_name!\",\n                   avatar_url,\n                   locale AS \"locale!\",\n                   timezone AS \"timezone!\"\n              FROM auth.verify_email($1)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "role!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "email_verified!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "phone",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "phone_verified!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "status!: _",
+        "type_info": {
+          "Custom": {
+            "name": "auth.user_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "active",
+                "suspended",
+                "deleted"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "password",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "failed_login_attempts!",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 9,
+        "name": "locked_until",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "display_name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "avatar_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "locale!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "timezone!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "e583d86dbd1172c9750435c176eb69ef1231549e4620ff2ade5b13b6b2d614bc"
+}

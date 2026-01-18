@@ -135,29 +135,68 @@ All secrets support `*_FILE` variants for Docker/Kubernetes secrets:
 
 ### Email Verification
 
+Two verification paths are supported for different client types:
+
+| Client         | Path                           | Auto-Login | Use Case            |
+| -------------- | ------------------------------ | ---------- | ------------------- |
+| Mobile/Desktop | gRPC `ConfirmVerification`     | ✅          | Deep links, best UX |
+| Web SPA        | gRPC-Web `ConfirmVerification` | ✅          | Single-page apps    |
+| Web fallback   | REST `/verify-email`           | ❌          | Bots, old browsers  |
+
+#### gRPC Flow (Primary — Auto-Login)
+
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant C as Client
+    participant C as Client App
     participant S as Auth Service
     participant DB as Database
     participant E as Email Service
 
     U->>C: Sign Up (email, password)
     C->>S: SignUp RPC
-    S->>DB: Create user (unverified)
+    S->>DB: Create user (pending)
     S->>DB: Create verification token
     S-->>E: Send verification email
-    S-->>C: AuthResponse (tokens)
+    S-->>C: AuthResponse (status=PENDING)
     C-->>U: Welcome! Check email
 
-    Note over E,U: Email with verification link
+    Note over E,U: Email link: yourapp.com/verify?token=xxx
 
-    U->>S: Click link /verify-email?token=xxx
-    S->>DB: Consume token (validate + delete)
-    S->>DB: Mark email as verified
-    S-->>U: 302 Redirect → Success page
+    U->>C: Click link → deep link / frontend route
+    C->>S: ConfirmVerification RPC (token, client_info)
+    Note over S,DB: Atomic DB function
+    S->>DB: auth.verify_email(token_hash)
+    Note over DB: Validate → Check status → Consume → Verify → Activate
+    DB-->>S: User row (for session)
+    S->>DB: Create session
+    S-->>C: AuthResponse (tokens, user)
+    C-->>U: Logged in! 🎉
 ```
+
+#### REST Flow (Fallback — Redirect Only)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant B as Browser
+    participant S as Auth Service
+    participant F as Frontend
+
+    Note over U,B: Email link clicked directly
+
+    B->>S: GET /verify-email?token=xxx
+    S->>S: auth.verify_email(token_hash)
+    S-->>B: 302 Redirect
+    B->>F: /email-verified?success=true
+    F-->>U: Success page (must log in manually)
+```
+
+**Key features:**
+- **Atomic operation**: Single DB function `auth.verify_email()` prevents race conditions
+- **Status check before consume**: Suspended accounts can't verify their email
+- **Auto-login (gRPC only)**: User gets tokens immediately after verification
+- **Consistent logic**: Both paths use the same atomic DB function
 
 ### Password Recovery
 
@@ -212,30 +251,47 @@ sequenceDiagram
 
 ## API Overview
 
-### Authentication
+### gRPC (AuthService)
+
+#### Authentication
 - `Authenticate` — Login with email/phone + password
 - `SignUp` — Register new account
 - `VerifyMfa` — Complete MFA challenge
 - `RefreshTokens` — Refresh access token
 - `SignOut` — End session
 
-### OAuth 2.0
+#### OAuth 2.0
 - `GetOAuthUrl` — Get authorization URL with PKCE
 - `ExchangeOAuthCode` — Exchange code for tokens
 - `LinkOAuthProvider` / `UnlinkOAuthProvider` — Manage linked accounts
 
-### Password & Recovery
+#### Verification
+- `RequestVerification` — Resend email/phone verification
+- `ConfirmVerification` — Verify token and auto-login (returns tokens)
+
+#### Password & Recovery
 - `ChangePassword` — Change password (requires current)
 - `RecoveryStart` / `RecoveryConfirm` — Password reset flow
 
-### MFA Management
+#### MFA Management
 - `GetMfaStatus` / `SetupMfa` / `ConfirmMfaSetup` / `DisableMfa`
 
-### Sessions
+#### Sessions
 - `ListSessions` / `RevokeSession` / `RevokeOtherSessions`
 
-### User Management (Admin)
+#### User Management (Admin)
 - `ListUsersInfo` / `ListUsers` / `CreateUser` / `UpdateUser`
+
+### REST Endpoints
+
+| Endpoint                  | Method | Description                                |
+| ------------------------- | ------ | ------------------------------------------ |
+| `/`                       | GET    | Service identity                           |
+| `/health`                 | GET    | Liveness check                             |
+| `/health/live`            | GET    | Kubernetes liveness probe                  |
+| `/health/ready`           | GET    | Kubernetes readiness probe (checks DB, S3) |
+| `/verify-email?token=xxx` | GET    | Email verification (302 redirect)          |
+| `/metrics`                | GET    | Prometheus metrics (optional)              |
 
 ## Development
 

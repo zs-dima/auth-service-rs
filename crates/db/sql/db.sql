@@ -780,6 +780,120 @@ END;
 $$;
 COMMENT ON FUNCTION auth.cleanup_expired_oauth_states IS 'Batch-deletes expired OAuth states; run every 15 min via pg_cron';
 
+-- =============================================================================
+-- EMAIL VERIFICATION
+-- =============================================================================
+-- Atomic email verification: validate token → check status → consume → verify → activate
+-- Returns user data on success for immediate session creation (auto-login)
+-- Single round-trip, prevents race conditions and partial failures
+
+-- Verify email atomically: validate token, check user status, consume token,
+-- mark email verified, activate pending accounts, return user data.
+--
+-- Returns: User row with profile data for session creation
+-- Errors:
+--   - P0001 'TOKEN_INVALID': Token not found, expired, or already used
+--   - P0001 'ACCOUNT_SUSPENDED': Account is suspended or deleted
+--   - P0001 'USER_NOT_FOUND': User record not found (shouldn't happen)
+CREATE OR REPLACE FUNCTION auth.verify_email(p_token_hash BYTEA)
+RETURNS TABLE (
+  id UUID,
+  role TEXT,
+  email TEXT,
+  email_verified BOOLEAN,
+  phone TEXT,
+  phone_verified BOOLEAN,
+  status auth.user_status,
+  password TEXT,
+  failed_login_attempts SMALLINT,
+  locked_until TIMESTAMPTZ,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ,
+  display_name TEXT,
+  avatar_url TEXT,
+  locale TEXT,
+  timezone TEXT
+)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY INVOKER
+PARALLEL UNSAFE
+SET search_path = auth, public
+AS $$
+DECLARE
+  v_user_id UUID;
+  v_status auth.user_status;
+BEGIN
+  -- 1. Validate token and get user_id (without consuming yet)
+  SELECT evt.id_user INTO v_user_id
+    FROM auth.email_verification_tokens evt
+   WHERE evt.token_hash = p_token_hash
+     AND evt.used_at IS NULL
+     AND evt.expires_at > now();
+
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'TOKEN_INVALID'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 2. Check user status before any modifications
+  SELECT u.status INTO v_status
+    FROM auth.users u
+   WHERE u.id = v_user_id
+     AND u.deleted_at IS NULL;
+
+  IF v_status IS NULL THEN
+    RAISE EXCEPTION 'USER_NOT_FOUND'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  IF v_status IN ('suspended', 'deleted') THEN
+    RAISE EXCEPTION 'ACCOUNT_SUSPENDED'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 3. Consume token (mark as used)
+  UPDATE auth.email_verification_tokens evt
+     SET used_at = now()
+   WHERE evt.token_hash = p_token_hash
+     AND evt.used_at IS NULL;
+
+  -- 4. Mark email verified and activate pending accounts
+  UPDATE auth.users u
+     SET email_verified = TRUE,
+         status = CASE
+             WHEN u.status = 'pending' THEN 'active'::auth.user_status
+             ELSE u.status
+         END
+   WHERE u.id = v_user_id;
+
+  -- 5. Return updated user with profile
+  RETURN QUERY
+  SELECT u.id,
+         u.role::TEXT,
+         u.email::TEXT,
+         u.email_verified,
+         u.phone::TEXT,
+         u.phone_verified,
+         u.status,
+         u.password,
+         u.failed_login_attempts,
+         u.locked_until,
+         u.created_at,
+         u.updated_at,
+         u.deleted_at,
+         p.display_name,
+         p.avatar_url,
+         p.locale::TEXT,
+         p.timezone::TEXT
+    FROM auth.users u
+    JOIN auth.user_profiles p ON p.id_user = u.id
+   WHERE u.id = v_user_id;
+END;
+$$;
+COMMENT ON FUNCTION auth.verify_email IS 'Atomic email verification with auto-login; returns user data or raises exception';
+
 -- Consume OAuth state (atomic get-and-delete for PKCE flow)
 -- Returns the state data if valid, NULL if not found or expired
 -- CRITICAL: Single-use token - delete on read prevents replay attacks

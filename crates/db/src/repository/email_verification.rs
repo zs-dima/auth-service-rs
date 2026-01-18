@@ -3,7 +3,7 @@
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-use crate::{AppError, CreateEmailVerificationTokenParams, DbError};
+use crate::{AppError, CreateEmailVerificationTokenParams, DbError, UserWithProfile};
 
 /// Email verification token repository for `auth.email_verification_tokens` operations.
 #[derive(Debug, Clone)]
@@ -105,5 +105,55 @@ impl EmailVerificationRepository {
         .await
         .map(|r| r.rows_affected())
         .map_err(|e| DbError(e).into())
+    }
+
+    /// Atomically verify email using DB function.
+    ///
+    /// Validates token, checks user status, consumes token, marks email verified,
+    /// activates pending accounts, and returns user data for session creation.
+    ///
+    /// # Errors
+    /// - `AppError::NotFound` - Token invalid, expired, or already used
+    /// - `AppError::PermissionDenied` - Account is suspended or deleted
+    pub async fn verify_email(&self, token_hash: &[u8]) -> Result<UserWithProfile, AppError> {
+        sqlx::query_as!(
+            UserWithProfile,
+            r#"
+            SELECT id AS "id!",
+                   role AS "role!",
+                   email,
+                   email_verified AS "email_verified!",
+                   phone,
+                   phone_verified AS "phone_verified!",
+                   status AS "status!: _",
+                   password,
+                   failed_login_attempts AS "failed_login_attempts!",
+                   locked_until,
+                   created_at AS "created_at!",
+                   updated_at AS "updated_at!",
+                   deleted_at,
+                   display_name AS "display_name!",
+                   avatar_url,
+                   locale AS "locale!",
+                   timezone AS "timezone!"
+              FROM auth.verify_email($1)
+            "#,
+            token_hash
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("TOKEN_INVALID") {
+                AppError::token_invalid("verification token")
+            } else if msg.contains("ACCOUNT_SUSPENDED") {
+                AppError::PermissionDenied("Account is suspended or deleted".to_string())
+            } else if msg.contains("USER_NOT_FOUND") {
+                AppError::NotFound("User not found".to_string())
+            } else {
+                DbError(e).into()
+            }
+        })?
+        .ok_or_else(|| AppError::token_invalid("verification token"))
     }
 }

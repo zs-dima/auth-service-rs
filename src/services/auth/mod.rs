@@ -13,6 +13,7 @@ mod handlers;
 mod password;
 mod sessions;
 mod tokens;
+mod verification;
 
 use std::sync::Arc;
 

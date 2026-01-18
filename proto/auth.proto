@@ -102,12 +102,15 @@ service AuthService {
   // Email/Phone Verification
   // =========================================================================
   // Uses DB: users.email_verified, users.phone_verified
+  //
+  // Flow: SignUp (pending) → email/SMS sent → ConfirmVerification → tokens issued
+  // RequestVerification: resend if token expired or for verified user changing email/phone
 
-  // Request verification code for email or phone
+  // Request verification code for email or phone (resend)
   rpc RequestVerification(RequestVerificationRequest) returns (google.protobuf.Empty);
 
-  // Confirm verification with code
-  rpc ConfirmVerification(ConfirmVerificationRequest) returns (google.protobuf.Empty);
+  // Confirm verification with token - returns auth tokens for seamless login
+  rpc ConfirmVerification(ConfirmVerificationRequest) returns (AuthResponse);
 
   // =========================================================================
   // MFA Management
@@ -493,6 +496,12 @@ message ConfirmVerificationRequest {
 
   // Type of verification
   VerificationType type = 2 [ (validate.rules).enum = {not_in : [ 0 ]} ];
+
+  // Installation ID for session creation
+  core.UUID installation_id = 3 [ (validate.rules).message.required = true ];
+
+  // Client info for session (enables auto-login after verification)
+  ClientInfo client_info = 4 [ (validate.rules).message.required = true ];
 }
 
 // =============================================================================

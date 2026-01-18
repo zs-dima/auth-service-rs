@@ -56,7 +56,7 @@ use axum::{
     routing::get,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::core::error_codes;
 use crate::startup::AppState;
@@ -168,6 +168,9 @@ async fn readiness_handler(State(state): State<AppState>) -> Json<HealthResponse
 ///
 /// - On success: Marks email as verified, redirects to success page
 /// - On failure: Redirects to error page with error code
+///
+/// Uses atomic DB function that validates token, checks user status,
+/// consumes token, and marks email verified in a single transaction.
 async fn verify_email_handler(
     State(state): State<AppState>,
     Query(query): Query<VerifyEmailQuery>,
@@ -186,28 +189,19 @@ async fn verify_email_handler(
     // Hash the token to look up in database
     let token_hash = TokenGenerator::hash_token(&token);
 
-    // Consume the token (validates and marks as used atomically)
-    let user_id = match state
-        .db
-        .email_verifications
-        .consume_token(&token_hash)
-        .await
-    {
-        Ok(id) => id,
-        Err(e) => {
-            warn!(error = %e, "Invalid or expired email verification token");
-            return Redirect::to(&urls.email_verified_error(error_codes::EXPIRED_TOKEN));
+    // Atomic: validate → check status → consume → verify → activate
+    match state.db.email_verifications.verify_email(&token_hash).await {
+        Ok(user) => {
+            info!(user_id = %user.id, "Email verified successfully");
+            Redirect::to(&urls.email_verified_success())
         }
-    };
-
-    // Mark user email as verified
-    if let Err(e) = state.db.users.set_email_verified(user_id).await {
-        error!(user_id = %user_id, error = %e, "Failed to set email verified");
-        return Redirect::to(&urls.email_verified_error(error_codes::INTERNAL_ERROR));
+        Err(e) => {
+            warn!(error = %e, "Email verification failed");
+            let error_code = match e {
+                auth_core::AppError::PermissionDenied(_) => error_codes::ACCOUNT_SUSPENDED,
+                _ => error_codes::EXPIRED_TOKEN,
+            };
+            Redirect::to(&urls.email_verified_error(error_code))
+        }
     }
-
-    info!(user_id = %user_id, "Email verified successfully");
-
-    // Redirect to frontend success page
-    Redirect::to(&urls.email_verified_success())
 }

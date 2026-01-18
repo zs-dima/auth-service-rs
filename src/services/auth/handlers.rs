@@ -235,23 +235,30 @@ impl AuthServiceTrait for AuthService {
     }
 
     // ========================================================================
-    // Verification (Stubs)
+    // Verification
     // ========================================================================
 
-    #[instrument(skip(self, _request))]
+    #[instrument(skip(self, request), fields(user_id))]
     async fn request_verification(
         &self,
-        _request: Request<RequestVerificationRequest>,
+        request: Request<RequestVerificationRequest>,
     ) -> Result<Response<()>, Status> {
-        Err(Status::unimplemented("Verification not yet implemented"))
+        let auth = request.auth()?;
+        tracing::Span::current().record("user_id", auth.user_id.to_string());
+
+        self.request_verification(request.into_inner(), auth.user_id)
+            .await?;
+        Ok(Response::new(()))
     }
 
-    #[instrument(skip(self, _request))]
+    #[instrument(skip(self, request))]
     async fn confirm_verification(
         &self,
-        _request: Request<ConfirmVerificationRequest>,
-    ) -> Result<Response<()>, Status> {
-        Err(Status::unimplemented("Verification not yet implemented"))
+        request: Request<ConfirmVerificationRequest>,
+    ) -> Result<Response<AuthResponse>, Status> {
+        let ctx = self.build_client_context(&request, request.get_ref().client_info.as_ref());
+        let result = self.confirm_verification(request.into_inner(), ctx).await?;
+        Ok(Response::new(result))
     }
 
     // ========================================================================
