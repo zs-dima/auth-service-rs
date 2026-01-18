@@ -194,14 +194,9 @@ impl UserService {
 
         // Build updated values from optional fields
         let email = req
-            .name
+            .email
             .as_ref()
-            .map(|_| {
-                req.email
-                    .as_ref()
-                    .map(|e| canonical_email(e))
-                    .unwrap_or_else(|| existing.email.clone().unwrap_or_default())
-            })
+            .map(|e| canonical_email(e))
             .or(existing.email.clone());
 
         let phone = req

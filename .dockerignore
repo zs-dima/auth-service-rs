@@ -1,0 +1,38 @@
+# Build artifacts
+target/
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Git
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!README.md
+LICENSE
+
+# Local configs
+*.local
+.env
+.env.*
+!configs/*.env
+
+# Tool configs
+bacon.toml
+rustfmt.toml
+.editorconfig
+
+# Deploy (not needed in build context)
+deploy/
+
+# Misc
+Makefile
+tool/

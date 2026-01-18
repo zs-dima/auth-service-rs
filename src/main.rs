@@ -34,7 +34,6 @@ async fn main() -> anyhow::Result<()> {
 
     info!(
         version = VERSION,
-        address = %config.grpc_address,
         grpc_web = config.grpc_web,
         otlp = config.otlp_endpoint.is_some(),
         sentry = config.sentry_dsn.is_some(),
