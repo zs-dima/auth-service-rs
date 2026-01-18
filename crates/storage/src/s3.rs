@@ -145,7 +145,7 @@ impl S3Storage {
     ///
     /// Uses `HeadObject` on a non-existent key instead of `HeadBucket`
     /// because `HeadBucket` requires `s3:ListBucket` permission.
-    /// A 404 response proves connectivity and authentication work.
+    /// A 404/403 response proves connectivity and authentication work.
     /// Key is under `users/` path to match IAM policy restrictions.
     pub async fn health_check(&self) -> bool {
         match self
@@ -157,10 +157,9 @@ impl S3Storage {
             .await
         {
             Ok(_) => true,
-            Err(SdkError::ServiceError(err)) => {
-                // 404 Not Found means bucket is accessible, object just doesn't exist
-                matches!(err.err(), HeadObjectError::NotFound(_))
-            }
+            // 404 or 403 means bucket is accessible, object just doesn't exist
+            // (MinIO behind Cloudflare returns 403 for missing objects)
+            Err(ref err) if is_not_found(err) => true,
             Err(_) => false,
         }
     }

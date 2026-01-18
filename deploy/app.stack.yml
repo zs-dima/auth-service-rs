@@ -85,7 +85,7 @@ services:
       - DB_POOL_MAX=10
       - DB_CONNECT_TIMEOUT=30
       - EMAIL_PROVIDER=mailjet
-      - EMAIL_SENDER="Auth Robot <no-reply@dmitrii.app>"
+      - EMAIL_SENDER=Auth Robot <no-reply@dmitrii.app>
       - MAILJET_WELCOME_TEMPLATE_ID=7654682
       - MAILJET_PASSWORD_RESET_TEMPLATE_ID=7654629
       - MAILJET_PASSWORD_CHANGED_TEMPLATE_ID=7654700
