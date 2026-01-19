@@ -15,7 +15,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY crates crates
 COPY proto proto
-COPY assets assets
+# COPY assets assets
 
 # Build static musl binary (lto + strip configured in Cargo.toml)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -32,10 +32,15 @@ FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 COPY --from=build /service /service
-COPY --from=build /app/assets/GeoLite2-Country.mmdb /assets/GeoLite2-Country.mmdb
+
+# GeoIP database: Mount as volume instead of baking into image
+# - MaxMind updates GeoLite2-Country weekly (Tuesdays)
+# - Download: https://github.com/wp-statistics/GeoLite2-Country
+# Mount to: /data/GeoLite2-Country.mmdb or copy during deployment:
+# COPY --from=build /app/assets/GeoLite2-Country.mmdb /data/GeoLite2-Country.mmdb
 
 ENV RUST_LOG=info
-ENV GEOIP_DB_PATH=/assets/GeoLite2-Country.mmdb
+ENV GEOIP_DB_PATH=/data/GeoLite2-Country.mmdb
 # Standard path for CA certificates (used by rustls/native-tls)
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 

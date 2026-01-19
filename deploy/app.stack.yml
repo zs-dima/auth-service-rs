@@ -54,6 +54,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - light-auth-service-data:/var/lib/keys
+      - geoip-data:/data:ro
     secrets:
       - light-auth-jwt-secret-key
       - light-auth-db-password
@@ -89,6 +90,7 @@ services:
       - MAILJET_WELCOME_TEMPLATE_ID=7654682
       - MAILJET_PASSWORD_RESET_TEMPLATE_ID=7654629
       - MAILJET_PASSWORD_CHANGED_TEMPLATE_ID=7654700
+      - GEOIP_DB_PATH=/data/GeoLite2-Country.mmdb
     # Health checks: Traefik probes /health endpoint (scratch image has no shell)
     deploy:
       <<: *deploy-app
@@ -139,6 +141,38 @@ services:
         - traefik.http.middlewares.auth-service-ratelimit.ratelimit.burst=50
         - traefik.http.middlewares.auth-service-ratelimit.ratelimit.period=1s
         ####################################################################
+
+  # GeoIP database updater - downloads weekly from GitHub
+  # MaxMind GeoLite2-Country updates every Tuesday
+  # Uses one-shot pattern: run, exit, Swarm restarts after delay
+  geoip-updater:
+    image: alpine:3.21
+    volumes:
+      - geoip-data:/data
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        cd /data
+        wget -q -O db.mmdb.gz https://github.com/wp-statistics/GeoLite2-Country/raw/refs/heads/master/GeoLite2-Country.mmdb.gz
+        gunzip -f db.mmdb.gz
+        mv db.mmdb GeoLite2-Country.mmdb
+        echo "GeoIP updated: $$(date -Iseconds)"
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+        # Swarm restarts after 7 days (max practical: use 24h, or external cron)
+        delay: 168h
+        window: 0s
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 8M
+      labels:
+        - org.label-schema.group=light-auth
 
   light-auth-db:
     <<: *default-keys
@@ -195,6 +229,8 @@ networks:
 volumes:
   light-auth-service-data:
   light-auth-db-data:
+    external: true
+  geoip-data:
     external: true
 
 # Docker Swarm secrets (create with: docker secret create <name> <file>)

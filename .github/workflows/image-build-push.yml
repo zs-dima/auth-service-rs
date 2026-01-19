@@ -58,7 +58,8 @@ jobs:
           file: deploy/Dockerfile
           platforms: linux/arm64
           push: true
-          provenance: false
+          sbom: true
+          provenance: true
           build-args: BIN=auth-service
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
@@ -110,7 +111,8 @@ jobs:
           file: deploy/Dockerfile
           platforms: linux/amd64
           push: true
-          provenance: false
+          sbom: true
+          provenance: true
           build-args: BIN=auth-service
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
@@ -165,9 +167,10 @@ jobs:
         working-directory: /tmp/digests
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-          DIGESTS=$(cat * | xargs -I {} echo "${IMAGE}@{}")
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(jq -cr '.annotations | map("--annotation " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+            $(printf '%s@sha256:%s ' "$IMAGE" *)
 
-          # Create manifest for each tag
-          for tag in ${{ steps.meta.outputs.tags }}; do
-            docker buildx imagetools create -t "${tag}" ${DIGESTS}
-          done
+      - name: Inspect image
+        run: docker buildx imagetools inspect ghcr.io/zs-dima/auth-service-rs:latest
