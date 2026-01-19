@@ -68,14 +68,16 @@ jobs:
 
       - name: Export digest
         run: |
-          mkdir -p ${{ runner.temp }}/digests
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: digest-arm64
-          path: /tmp/digests/arm64
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
           retention-days: 1
 
   # Build AMD64 on native x86 runner
@@ -123,14 +125,16 @@ jobs:
 
       - name: Export digest
         run: |
-          mkdir -p ${{ runner.temp }}/digests
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: digest-amd64
-          path: /tmp/digests/amd64
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
           retention-days: 1
 
   # Merge digests into multi-arch manifest (only when building both)
@@ -163,7 +167,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digest-*
           merge-multiple: true
 
