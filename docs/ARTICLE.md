@@ -1,4 +1,9 @@
-# Building Production-Grade Authentication: The Rust Advantage
+---
+title: Home
+permalink: /
+---
+
+# Rust gRPC authentication service + cross-platform client.
 
 *~35 min read*
 
