@@ -82,7 +82,7 @@ This article dissects a **production-grade authentication service** that demonst
 - [Compile-Time SQL Verification](#compile-time-sql-verification)
 - [Zero-Cost Async & Type-Driven Security](#zero-cost-async--type-driven-security)
 
-**Part II: Architectural Innovations**
+**Part II: Architecture**
 - [Architecture Overview](#architecture-overview)
 - [Protocol Multiplexing: One Port for Everything](#protocol-multiplexing-one-port-for-everything)
 - [Unified Tower Middleware](#unified-tower-middleware)
@@ -250,7 +250,7 @@ During development, the compiler caught **timing attack vulnerabilities** that w
 
 ---
 
-## Part II: Architectural Innovations
+## Part II: Architecture
 
 ### Architecture Overview
 
@@ -519,7 +519,7 @@ This architecture provides **simplicity by default** with **power when needed** 
 
 Race conditions in authentication systems cause **critical security bugs**: double token use, account takeover, and privilege escalation. Traditional multi-query transactions leave windows where concurrent requests can corrupt state. This section demonstrates how to eliminate these vulnerabilities entirely.
 
-#### The Innovation: PostgreSQL Functions
+#### PostgreSQL Functions
 
 Instead of multi-step transactions in application code, critical operations are **atomic database functions**:
 
@@ -2607,8 +2607,9 @@ The Rust ecosystem has matured to the point where building production services i
 Questions? Feedback? Find me:
 
 - **GitHub**: [@zs-dima](https://github.com/zs-dima)
+- **LinkedIn**: [Dmitrii Zusmanovich](https://www.linkedin.com/in/zs-dima/)
 - **X (Twitter)**: [@zs_dima](https://x.com/zs_dima)
-- **Email**: dmitrii@zusmanovich.dev
+- **Email**: info@dmitrii.app 
 
 ---
 
