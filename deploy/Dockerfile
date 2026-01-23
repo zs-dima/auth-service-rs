@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.12
 
 # ---- Build stage ----
-FROM rust:1.92-alpine AS build
+FROM rust:1.93-alpine AS build
 WORKDIR /app
 
 RUN apk add --no-cache musl-dev protobuf-dev ca-certificates
@@ -15,7 +15,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY crates crates
 COPY proto proto
-# COPY assets assets
+# COPY assets assets # Embed assets during build if needed
 
 # Build static musl binary (lto + strip configured in Cargo.toml)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -37,7 +37,7 @@ COPY --from=build /service /service
 # - MaxMind updates GeoLite2-Country weekly (Tuesdays)
 # - Download: https://github.com/wp-statistics/GeoLite2-Country
 # Mount to: /data/GeoLite2-Country.mmdb or copy during deployment:
-# COPY --from=build /app/assets/GeoLite2-Country.mmdb /data/GeoLite2-Country.mmdb
+# COPY --from=build /app/assets/GeoLite2-Country.mmdb /data/GeoLite2-Country.mmdb # Embed assets during build if needed
 
 ENV RUST_LOG=info
 ENV GEOIP_DB_PATH=/data/GeoLite2-Country.mmdb

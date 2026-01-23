@@ -42,12 +42,11 @@ impl AuthService {
                     return Err(Status::failed_precondition("Email already verified"));
                 }
 
-                self.ctx.send_welcome_email(
+                self.ctx.send_verification_email(
                     self.config.email_verification_ttl_hours,
                     user_id,
                     email.clone(),
                     user.display_name.clone(),
-                    None,
                 );
 
                 info!(user_id = %user_id, "Verification email resent");

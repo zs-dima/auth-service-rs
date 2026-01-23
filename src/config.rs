@@ -113,6 +113,14 @@ pub struct Config {
     #[arg(long, env = "EMAIL_VERIFICATION_TTL_HOURS", default_value = "24")]
     pub email_verification_ttl_hours: u32,
 
+    /// Maximum failed login attempts before account lockout (default: 5)
+    #[arg(long, env = "MAX_FAILED_LOGIN_ATTEMPTS", default_value = "5")]
+    pub max_failed_login_attempts: u16,
+
+    /// Account lockout duration in minutes (default: 15)
+    #[arg(long, env = "LOCKOUT_DURATION_MINUTES", default_value = "15")]
+    pub lockout_duration_minutes: u32,
+
     // =========================================================================
     // Database Configuration
     // =========================================================================
@@ -142,6 +150,10 @@ pub struct Config {
     /// Use JSON log format
     #[arg(long, env = "JSON_LOGS", default_value = "true")]
     pub json_logs: bool,
+
+    /// Enable Prometheus metrics endpoint (/metrics)
+    #[arg(long, env = "METRICS_ENABLED", default_value = "false")]
+    pub metrics_enabled: bool,
 
     /// OpenTelemetry OTLP endpoint
     #[arg(long, env = "OTLP_ENDPOINT")]
@@ -217,12 +229,16 @@ pub struct Config {
     mailjet_api_secret_file: Option<String>,
 
     /// Mailjet template ID for password reset emails
-    #[arg(long, env = "MAILJET_PASSWORD_RESET_TEMPLATE_ID")]
-    pub mailjet_password_reset_template_id: Option<u64>,
+    #[arg(long, env = "MAILJET_PASSWORD_RECOVERY_START_TEMPLATE_ID")]
+    pub mailjet_password_recovery_start_template_id: Option<u64>,
 
     /// Mailjet template ID for welcome emails (optional)
     #[arg(long, env = "MAILJET_WELCOME_TEMPLATE_ID")]
     pub mailjet_welcome_template_id: Option<u64>,
+
+    /// Mailjet template ID for email verification emails (optional)
+    #[arg(long, env = "MAILJET_EMAIL_VERIFICATION_TEMPLATE_ID")]
+    pub mailjet_email_verification_template_id: Option<u64>,
 
     /// Mailjet template ID for password changed confirmation (optional)
     #[arg(long, env = "MAILJET_PASSWORD_CHANGED_TEMPLATE_ID")]
@@ -403,7 +419,7 @@ impl Config {
         self.mailjet_api_key.is_some()
             && self.mailjet_api_secret().is_some()
             && self.email_sender.is_some()
-            && self.mailjet_password_reset_template_id.is_some()
+            && self.mailjet_password_recovery_start_template_id.is_some()
     }
 
     /// Parse email sender into (name, email) tuple.
@@ -450,6 +466,7 @@ mod tests {
             log_level: "INFO".to_string(),
             json_logs: false,
             otlp_endpoint: None,
+            metrics_enabled: false,
             sentry_dsn: None,
             environment: None,
             rate_limit_rps: 100,
@@ -468,9 +485,12 @@ mod tests {
             mailjet_api_key: None,
             mailjet_api_secret: None,
             mailjet_api_secret_file: None,
-            mailjet_password_reset_template_id: None,
             mailjet_welcome_template_id: None,
+            mailjet_email_verification_template_id: None,
+            mailjet_password_recovery_start_template_id: None,
             mailjet_password_changed_template_id: None,
+            max_failed_login_attempts: 5,
+            lockout_duration_minutes: 15,
         }
     }
 
@@ -585,6 +605,10 @@ pub struct AuthServiceConfig {
     pub password_reset_ttl_minutes: u32,
     /// Email verification token TTL in hours.
     pub email_verification_ttl_hours: u32,
+    /// Maximum failed login attempts before account lockout.
+    pub max_failed_login_attempts: u16,
+    /// Account lockout duration in minutes.
+    pub lockout_duration_minutes: u32,
 }
 
 // =============================================================================

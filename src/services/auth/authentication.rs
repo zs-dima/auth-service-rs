@@ -1,8 +1,10 @@
 //! Authentication: sign-in, sign-up, sign-out.
 
+use auth_core::validation::domain;
 use auth_core::{StatusExt, StrExt, UuidExt, ValidateExt};
 use auth_db::CreateUserWithProfileParams;
 use auth_proto::auth::{AuthResponse, AuthenticateRequest, IdentifierType, SignUpRequest};
+use chrono::{Duration, Utc};
 use tonic::Status;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -12,6 +14,7 @@ use crate::core::password;
 
 impl AuthService {
     /// Authenticates user with identifier (email/phone) and password.
+    #[allow(clippy::cast_possible_wrap)] // Safe: lockout_duration_minutes is bounded
     pub(super) async fn authenticate(
         &self,
         req: AuthenticateRequest,
@@ -51,6 +54,20 @@ impl AuthService {
             return Ok(Self::failed_auth());
         };
 
+        // Check if account is locked
+        if user
+            .locked_until
+            .is_some_and(|locked_until| locked_until > Utc::now())
+        {
+            let locked_until = user.locked_until.unwrap();
+            warn!(identifier = %identifier, locked_until = %locked_until, "Account is locked");
+            return Ok(Self::locked_auth(
+                locked_until,
+                user.failed_login_attempts,
+                self.config.max_failed_login_attempts.into(),
+            ));
+        }
+
         let Some(password_hash) = user.password.as_deref() else {
             warn!(identifier = %identifier, "User has no password (OAuth-only account)");
             return Ok(Self::failed_auth());
@@ -58,7 +75,49 @@ impl AuthService {
 
         if !password::verify(&req.password, password_hash) {
             warn!(identifier = %identifier, "Invalid password");
+
+            // Increment failed login count
+            if let Ok(attempts) = self.ctx.db().users.increment_failed_login(user.id).await {
+                let max_attempts = self.config.max_failed_login_attempts;
+                if i32::from(attempts) >= i32::from(max_attempts) {
+                    // Lock the account
+                    let lockout_duration =
+                        Duration::minutes(i64::from(self.config.lockout_duration_minutes));
+                    let locked_until = Utc::now() + lockout_duration;
+
+                    if let Err(e) = self
+                        .ctx
+                        .db()
+                        .users
+                        .lock_account(user.id, locked_until)
+                        .await
+                    {
+                        warn!(user_id = %user.id, error = %e, "Failed to lock account");
+                    } else {
+                        warn!(user_id = %user.id, locked_until = %locked_until, "Account locked due to too many failed attempts");
+                        return Ok(Self::locked_auth(
+                            locked_until,
+                            attempts,
+                            max_attempts.into(),
+                        ));
+                    }
+                }
+            }
+
             return Ok(Self::failed_auth());
+        }
+
+        // Reset failed login attempts on successful login
+        if user.failed_login_attempts > 0
+            && self
+                .ctx
+                .db()
+                .users
+                .reset_failed_login(user.id)
+                .await
+                .is_err()
+        {
+            warn!(user_id = %user.id, "Failed to reset login attempts");
         }
 
         let tokens = self
@@ -82,6 +141,10 @@ impl AuthService {
         client_ctx: ClientContext,
     ) -> Result<AuthResponse, Status> {
         req.validate_or_status()?;
+
+        // Additional domain validation beyond proto rules
+        domain::validate_password(&req.password)?;
+        domain::validate_name(&req.display_name)?;
 
         let id_type = Self::resolve_identifier_type(req.identifier_type, &req.identifier);
         let identifier = Self::normalize_identifier(&req.identifier, id_type);
@@ -171,14 +234,14 @@ impl AuthService {
         Ok(Self::success_auth(&user, tokens))
     }
 
-    /// Signs out user by revoking all sessions.
-    pub(super) async fn sign_out(&self, user_id: Uuid) -> Result<(), Status> {
-        info!(user_id = %user_id, "Signing out");
+    /// Signs out user by revoking the current session.
+    pub(super) async fn sign_out(&self, user_id: Uuid, device_id: &str) -> Result<(), Status> {
+        info!(user_id = %user_id, device_id = %device_id, "Signing out");
 
         self.ctx
             .db()
             .sessions
-            .revoke_all_user_sessions(user_id)
+            .revoke_session_by_device_id(user_id, device_id)
             .await
             .status("Sign out failed")?;
 

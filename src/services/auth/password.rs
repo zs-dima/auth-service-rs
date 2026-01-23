@@ -1,5 +1,6 @@
 //! Password management: recovery and change.
 
+use auth_core::validation::domain;
 use auth_core::{StatusExt, TokenGenerator, ValidateExt};
 use auth_db::{CreatePasswordResetTokenParams, UserStatus};
 use auth_proto::auth::{ChangePasswordRequest, RecoveryConfirmRequest, RecoveryStartRequest};
@@ -87,6 +88,9 @@ impl AuthService {
     pub(super) async fn recovery_confirm(&self, req: RecoveryConfirmRequest) -> Result<(), Status> {
         req.validate_or_status()?;
 
+        // Domain validation beyond proto rules (letter + digit requirement)
+        domain::validate_password(&req.new_password)?;
+
         debug!(
             token_len = req.token.len(),
             "Password recovery confirmation attempt"
@@ -140,6 +144,12 @@ impl AuthService {
             warn!(user_id = %user_id, error = %e, "Failed to revoke sessions after password reset");
         }
 
+        // Send password changed notification
+        if let Some(email) = &user.email {
+            self.ctx
+                .send_password_changed_email(email.clone(), user.display_name.clone());
+        }
+
         info!(user_id = %user_id, "Password reset completed successfully");
         Ok(())
     }
@@ -190,6 +200,12 @@ impl AuthService {
             .await
         {
             warn!(user_id = %user_id, error = %e, "Failed to revoke other sessions");
+        }
+
+        // Send password changed notification
+        if let Some(email) = &user.email {
+            self.ctx
+                .send_password_changed_email(email.clone(), user.display_name.clone());
         }
 
         info!(user_id = %user_id, "Password changed successfully");

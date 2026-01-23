@@ -70,6 +70,10 @@ impl EmailProvider {
         match self {
             Self::Smtp(_service) => {
                 // TODO: Implement SMTP welcome email template
+                tracing::warn!(
+                    to_email,
+                    "SMTP welcome email template not implemented, skipping"
+                );
                 Ok(())
             }
             Self::Mailjet(service) => service
@@ -80,6 +84,32 @@ impl EmailProvider {
                     temp_password,
                     verification_url,
                 )
+                .await
+                .map_err(Into::into),
+        }
+    }
+
+    /// Send an email verification email.
+    ///
+    /// # Errors
+    /// Returns an error if the email fails to send.
+    pub async fn send_email_verification(
+        &self,
+        to_email: &str,
+        to_name: &str,
+        verification_url: &str,
+    ) -> Result<(), BoxError> {
+        match self {
+            Self::Smtp(_service) => {
+                // TODO: Implement SMTP email verification template
+                tracing::warn!(
+                    to_email,
+                    "SMTP email verification template not implemented, skipping"
+                );
+                Ok(())
+            }
+            Self::Mailjet(service) => service
+                .send_email_verification(to_email, to_name, verification_url)
                 .await
                 .map_err(Into::into),
         }
@@ -98,6 +128,10 @@ impl EmailProvider {
         match self {
             Self::Smtp(_service) => {
                 // TODO: Implement SMTP password changed email template
+                tracing::warn!(
+                    to_email,
+                    "SMTP password changed template not implemented, skipping"
+                );
                 Ok(())
             }
             Self::Mailjet(service) => service

@@ -1,6 +1,6 @@
 # Auth Service
 
-High-performance authentication gRPC service built with Rust 1.92, Tonic, and SQLx.
+High-performance authentication gRPC service built with Rust 1.93, Tonic, and SQLx.
 
 ## Architecture
 
@@ -34,13 +34,19 @@ High-performance authentication gRPC service built with Rust 1.92, Tonic, and SQ
 ## Features
 
 - **OWASP-compliant** authentication with account lockout and generic error messages
-- **Multi-factor authentication** (TOTP, SMS, Email, Recovery codes)
-- **OAuth 2.0** with PKCE (Google, GitHub, Microsoft, Apple, Facebook)
 - **Session management** with device tracking and geolocation
 - **JWT tokens** with configurable TTL (access + refresh)
+- **Refresh token rotation** — tokens are single-use (replaced on each refresh)
+- **Password recovery** with secure token-based reset flow
+- **Email verification** with auto-login support
 - **Streaming RPCs** for efficient bulk data transfer
 - **gRPC-Web** support for browser clients
 - **OpenTelemetry** tracing and Sentry error tracking
+
+### Planned Features
+
+- **Multi-factor authentication** (TOTP, SMS, Email, Recovery codes)
+- **OAuth 2.0** with PKCE (Google, GitHub, Microsoft, Apple, Facebook)
 
 ## Quick Start
 
@@ -66,24 +72,26 @@ make run
 
 ### Server
 
-| Variable              | Default         | Description                              |
-| --------------------- | --------------- | ---------------------------------------- |
-| `PORT`                | —               | Overrides `GRPC_ADDRESS` (optional)      |
-| `REST_ADDRESS`        | —               | Not used, for future port separation     |
-| `GRPC_ADDRESS`        | `0.0.0.0:50051` | Server bind address                      |
-| `GRPC_WEB`            | `true`          | Enable gRPC-Web (HTTP/1.1)               |
-| `GRPC_API_REFLECTION` | `false`         | Enable gRPC reflection                   |
-| `CORS_ALLOW_ORIGINS`  | —               | Allowed origins (comma-separated or `*`) |
-| `CONCURRENCY_LIMIT`   | `100`           | Max concurrent requests                  |
+| Variable              | Default         | Description                               |
+| --------------------- | --------------- | ----------------------------------------- |
+| `PORT`                | —               | Overrides `GRPC_ADDRESS` (Cloud Run, etc) |
+| `REST_ADDRESS`        | —               | Not used, for future port separation      |
+| `GRPC_ADDRESS`        | `0.0.0.0:50051` | Server bind address                       |
+| `GRPC_WEB`            | `true`          | Enable gRPC-Web (HTTP/1.1)                |
+| `GRPC_API_REFLECTION` | `false`         | Enable gRPC reflection                    |
+| `CORS_ALLOW_ORIGINS`  | —               | Allowed origins (comma-separated or `*`)  |
+| `CONCURRENCY_LIMIT`   | `100`           | Max concurrent requests                   |
 
 ### Authentication
 
-| Variable                       | Default | Description                |
-| ------------------------------ | ------- | -------------------------- |
-| `ACCESS_TOKEN_TTL_MINUTES`     | `60`    | Access token lifetime      |
-| `REFRESH_TOKEN_TTL_DAYS`       | `90`    | Refresh token lifetime     |
-| `PASSWORD_RESET_TTL_MINUTES`   | `60`    | Password reset link expiry |
-| `EMAIL_VERIFICATION_TTL_HOURS` | `24`    | Email verification expiry  |
+| Variable                       | Default | Description                         |
+| ------------------------------ | ------- | ----------------------------------- |
+| `ACCESS_TOKEN_TTL_MINUTES`     | `60`    | Access token lifetime               |
+| `REFRESH_TOKEN_TTL_DAYS`       | `90`    | Refresh token lifetime              |
+| `PASSWORD_RESET_TTL_MINUTES`   | `60`    | Password reset link expiry          |
+| `EMAIL_VERIFICATION_TTL_HOURS` | `24`    | Email verification expiry           |
+| `MAX_FAILED_LOGIN_ATTEMPTS`    | `5`     | Failed attempts before account lock |
+| `LOCKOUT_DURATION_MINUTES`     | `15`    | Account lockout duration            |
 
 ### Database
 
@@ -96,40 +104,77 @@ make run
 
 ### Storage (S3)
 
-| Variable               | Description                    |
-| ---------------------- | ------------------------------ |
-| `S3_URL`               | S3 endpoint URL                |
-| `S3_ACCESS_KEY_ID`     | Access key ID                  |
-| `S3_SECRET_ACCESS_KEY` | Secret access key              |
-| `MAX_PHOTO_BYTES`      | Max upload size (default: 2MB) |
+| Variable               | Default | Description                      |
+| ---------------------- | ------- | -------------------------------- |
+| `S3_URL`               | —       | S3 endpoint URL with bucket      |
+| `S3_ACCESS_KEY_ID`     | —       | Access key ID                    |
+| `S3_SECRET_ACCESS_KEY` | —       | Secret access key                |
+| `MAX_PHOTO_BYTES`      | `2MB`   | Max avatar upload size (2097152) |
+
+### GeoIP
+
+| Variable        | Description                           |
+| --------------- | ------------------------------------- |
+| `GEOIP_DB_PATH` | Path to MaxMind GeoLite2-Country.mmdb |
 
 ### Email (SMTP or Mailjet)
 
-| Variable             | Description                        |
-| -------------------- | ---------------------------------- |
-| `EMAIL_PROVIDER`     | `smtp` or `mailjet`                |
-| `EMAIL_SENDER`       | Sender: `Name <email@example.com>` |
-| `DOMAIN`             | Application domain for email links |
-| `SMTP_URL`           | SMTP URL: `smtp://user@host:port`  |
-| `SMTP_PASSWORD`      | SMTP password                      |
-| `MAILJET_API_KEY`    | Mailjet public key                 |
-| `MAILJET_API_SECRET` | Mailjet private key                |
+| Variable         | Default | Description                        |
+| ---------------- | ------- | ---------------------------------- |
+| `EMAIL_PROVIDER` | `smtp`  | `smtp` or `mailjet`                |
+| `EMAIL_SENDER`   | —       | Sender: `Name <email@example.com>` |
+| `DOMAIN`         | —       | Application domain for email links |
+
+#### SMTP Configuration
+
+| Variable        | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `SMTP_URL`      | SMTP URL: `smtp://user@host:port?tls=starttls` |
+| `SMTP_PASSWORD` | SMTP password (inserted into URL)              |
+
+#### Mailjet Configuration
+
+| Variable                                      | Description                        |
+| --------------------------------------------- | ---------------------------------- |
+| `MAILJET_API_KEY`                             | Mailjet public API key             |
+| `MAILJET_API_SECRET`                          | Mailjet private API key            |
+| `MAILJET_WELCOME_TEMPLATE_ID`                 | Template ID for welcome email      |
+| `MAILJET_EMAIL_VERIFICATION_TEMPLATE_ID`      | Template ID for email verification |
+| `MAILJET_PASSWORD_RECOVERY_START_TEMPLATE_ID` | Template ID for password reset     |
+| `MAILJET_PASSWORD_CHANGED_TEMPLATE_ID`        | Template ID for password changed   |
+
+**Mailjet Template Variables:**
+
+| Template           | Variables                  |
+| ------------------ | -------------------------- |
+| Welcome            | `name`, `verification_url` |
+| Email Verification | `name`, `verification_url` |
+| Password Recovery  | `name`, `reset_url`        |
+| Password Changed   | `name`                     |
 
 ### Observability
 
-| Variable        | Default | Description                            |
-| --------------- | ------- | -------------------------------------- |
-| `LOG_LEVEL`     | `INFO`  | TRACE, DEBUG, INFO, WARN, ERROR        |
-| `JSON_LOGS`     | `true`  | JSON log format                        |
-| `OTLP_ENDPOINT` | —       | OpenTelemetry collector endpoint       |
-| `SENTRY_DSN`    | —       | Sentry error tracking DSN              |
-| `ENVIRONMENT`   | —       | Environment name (production, staging) |
+| Variable          | Default | Description                            |
+| ----------------- | ------- | -------------------------------------- |
+| `LOG_LEVEL`       | `INFO`  | TRACE, DEBUG, INFO, WARN, ERROR        |
+| `JSON_LOGS`       | `true`  | JSON log format                        |
+| `METRICS_ENABLED` | `true`  | Enable Prometheus `/metrics` endpoint  |
+| `OTLP_ENDPOINT`   | —       | OpenTelemetry collector endpoint       |
+| `SENTRY_DSN`      | —       | Sentry error tracking DSN              |
+| `ENVIRONMENT`     | —       | Environment name (production, staging) |
 
 ### Secrets from Files
 
-All secrets support `*_FILE` variants for Docker/Kubernetes secrets:
-- `JWT_SECRET_KEY_FILE`, `DB_PASSWORD_FILE`, `S3_SECRET_ACCESS_KEY_FILE`
-- `SMTP_PASSWORD_FILE`, `MAILJET_API_SECRET_FILE`
+All secrets support `*_FILE` variants for Docker/Kubernetes secrets.
+File path takes precedence over direct value.
+
+| Secret                 | File Variant                |
+| ---------------------- | --------------------------- |
+| `JWT_SECRET_KEY`       | `JWT_SECRET_KEY_FILE`       |
+| `DB_PASSWORD`          | `DB_PASSWORD_FILE`          |
+| `S3_SECRET_ACCESS_KEY` | `S3_SECRET_ACCESS_KEY_FILE` |
+| `SMTP_PASSWORD`        | `SMTP_PASSWORD_FILE`        |
+| `MAILJET_API_SECRET`   | `MAILJET_API_SECRET_FILE`   |
 
 ## Authentication Flows
 
@@ -256,42 +301,59 @@ sequenceDiagram
 #### Authentication
 - `Authenticate` — Login with email/phone + password
 - `SignUp` — Register new account
-- `VerifyMfa` — Complete MFA challenge
 - `RefreshTokens` — Refresh access token
-- `SignOut` — End session
+- `ValidateCredentials` — Validate current session
+- `SignOut` — End session (by device_id)
+
+#### Verification
+- `RequestVerification` — Resend email verification
+- `ConfirmVerification` — Verify token and auto-login (returns tokens)
+
+#### Password & Recovery
+- `ChangePassword` — Change password (requires current password)
+- `RecoveryStart` — Request password reset (OWASP-compliant)
+- `RecoveryConfirm` — Complete password reset with token
+
+#### Sessions
+- `ListSessions` — List all user sessions with device info
+- `RevokeSession` — Revoke specific session by device_id
+- `RevokeOtherSessions` — Revoke all sessions except current
+
+### gRPC (UserService)
+
+#### User Management (Admin)
+- `ListUsers` — Stream all users with full profile
+- `ListUsersInfo` — Stream user summaries (id, name, email)
+- `CreateUser` — Create user with optional welcome email
+- `UpdateUser` — Update user profile and status
+- `SetPassword` — Admin password reset (no current password required)
+
+#### Avatars
+- `GetAvatarUploadUrl` — Get presigned S3 upload URL
+- `ConfirmAvatarUpload` — Confirm and set avatar after upload
+- `DeleteAvatar` — Remove user avatar
+
+### Planned APIs (Not Implemented)
 
 #### OAuth 2.0
 - `GetOAuthUrl` — Get authorization URL with PKCE
 - `ExchangeOAuthCode` — Exchange code for tokens
 - `LinkOAuthProvider` / `UnlinkOAuthProvider` — Manage linked accounts
 
-#### Verification
-- `RequestVerification` — Resend email/phone verification
-- `ConfirmVerification` — Verify token and auto-login (returns tokens)
-
-#### Password & Recovery
-- `ChangePassword` — Change password (requires current)
-- `RecoveryStart` / `RecoveryConfirm` — Password reset flow
-
-#### MFA Management
+#### MFA
+- `VerifyMfa` — Complete MFA challenge
 - `GetMfaStatus` / `SetupMfa` / `ConfirmMfaSetup` / `DisableMfa`
-
-#### Sessions
-- `ListSessions` / `RevokeSession` / `RevokeOtherSessions`
-
-#### User Management (Admin)
-- `ListUsersInfo` / `ListUsers` / `CreateUser` / `UpdateUser`
 
 ### REST Endpoints
 
 | Endpoint                  | Method | Description                                |
 | ------------------------- | ------ | ------------------------------------------ |
-| `/`                       | GET    | Service identity                           |
-| `/health`                 | GET    | Liveness check                             |
+| `/`                       | GET    | Service identity (JSON)                    |
+| `/health`                 | GET    | Health status with DB and S3 checks        |
 | `/health/live`            | GET    | Kubernetes liveness probe                  |
 | `/health/ready`           | GET    | Kubernetes readiness probe (checks DB, S3) |
 | `/verify-email?token=xxx` | GET    | Email verification (302 redirect)          |
-| `/metrics`                | GET    | Prometheus metrics (optional)              |
+| `/metrics`                | GET    | Prometheus metrics                         |
 
 ## Development
 

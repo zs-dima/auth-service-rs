@@ -127,4 +127,77 @@ impl ServiceContext {
             info!(user_id = %user_id, "Welcome email sent with verification link");
         });
     }
+
+    /// Sends email verification link (fire-and-forget).
+    ///
+    /// Spawns an async task to create a verification token and send the email.
+    /// Used for re-requesting verification (not initial sign-up).
+    /// Does nothing if email service is not configured.
+    pub fn send_verification_email(
+        &self,
+        ttl_hours: u32,
+        user_id: Uuid,
+        email: String,
+        display_name: String,
+    ) {
+        let Some(email_provider) = self.email.clone() else {
+            return;
+        };
+
+        let db = self.db.clone();
+        let urls = self.urls.clone();
+
+        tokio::spawn(async move {
+            let token = TokenGenerator::generate_secure_token();
+            let token_hash = TokenGenerator::hash_token(&token);
+            let expires_at = Utc::now() + chrono::Duration::hours(i64::from(ttl_hours));
+
+            if let Err(e) = db
+                .email_verifications
+                .create_token(auth_db::CreateEmailVerificationTokenParams {
+                    id_user: user_id,
+                    token_hash: &token_hash,
+                    expires_at,
+                })
+                .await
+            {
+                error!(user_id = %user_id, error = %e, "Failed to create email verification token");
+                return;
+            }
+
+            let verification_url = urls.verify_email(&token);
+
+            if let Err(e) = email_provider
+                .send_email_verification(&email, &display_name, &verification_url)
+                .await
+            {
+                error!(user_id = %user_id, error = %e, "Failed to send verification email");
+                return;
+            }
+
+            info!(user_id = %user_id, "Verification email sent");
+        });
+    }
+
+    /// Sends password changed notification email (fire-and-forget).
+    ///
+    /// Spawns an async task to notify the user their password was changed.
+    /// Does nothing if email service is not configured.
+    pub fn send_password_changed_email(&self, email: String, display_name: String) {
+        let Some(email_provider) = self.email.clone() else {
+            return;
+        };
+
+        tokio::spawn(async move {
+            if let Err(e) = email_provider
+                .send_password_changed(&email, &display_name)
+                .await
+            {
+                tracing::error!(email = %email, error = %e, "Failed to send password changed email");
+                return;
+            }
+
+            tracing::info!(email = %email, "Password changed notification sent");
+        });
+    }
 }

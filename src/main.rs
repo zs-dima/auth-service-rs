@@ -30,18 +30,25 @@ async fn main() -> anyhow::Result<()> {
         version: Some(VERSION.to_string()),
     };
     let telemetry_guard = setup_telemetry(&telemetry_config);
-    let _metrics_handle = init_metrics();
+
+    // Initialize metrics only if enabled
+    let metrics_handle = if config.metrics_enabled {
+        Some(init_metrics())
+    } else {
+        None
+    };
 
     info!(
         version = VERSION,
         grpc_web = config.grpc_web,
+        metrics = config.metrics_enabled,
         otlp = config.otlp_endpoint.is_some(),
         sentry = config.sentry_dsn.is_some(),
         pid = std::process::id(),
         "Starting auth-service"
     );
 
-    let (app, addr) = startup::build_app(&config).await?;
+    let (app, addr) = startup::build_app(&config, metrics_handle).await?;
 
     info!(address = %addr, "Server listening");
 

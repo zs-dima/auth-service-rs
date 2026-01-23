@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth.users\n               SET locked_until = $2\n             WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "66d8f91291494ca69492bac62b5fd7dea277990fbb182d5cce90ebf867bbbd56"
+}

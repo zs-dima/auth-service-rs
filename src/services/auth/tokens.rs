@@ -67,9 +67,17 @@ impl AuthService {
         Ok(tokens)
     }
 
-    /// Validates that credentials (JWT) belong to an active user.
-    pub(super) async fn validate_credentials(&self, user_id: Uuid) -> Result<bool, Status> {
-        debug!(user_id = %user_id, "Validating credentials");
+    /// Validates that credentials (JWT) belong to an active user with valid session.
+    ///
+    /// Checks:
+    /// 1. User exists and is active
+    /// 2. Session for the `device_id` still exists (not revoked)
+    pub(super) async fn validate_credentials(
+        &self,
+        user_id: Uuid,
+        device_id: &str,
+    ) -> Result<bool, Status> {
+        debug!(user_id = %user_id, device_id = %device_id, "Validating credentials");
 
         let user = self
             .ctx
@@ -85,6 +93,23 @@ impl AuthService {
         if user.status != UserStatus::Active {
             warn!(user_id = %user_id, status = ?user.status, "Inactive user attempted validation");
             return Err(Status::permission_denied("Account is not active"));
+        }
+
+        // Verify session exists (not revoked) using efficient EXISTS query
+        let session_valid = self
+            .ctx
+            .db()
+            .sessions
+            .session_exists(user_id, device_id)
+            .await
+            .map_err(|e| {
+                warn!(user_id = %user_id, error = %e, "Failed to check session");
+                Status::internal("Session validation failed")
+            })?;
+
+        if !session_valid {
+            warn!(user_id = %user_id, device_id = %device_id, "Session not found or revoked");
+            return Err(Status::unauthenticated("Session revoked"));
         }
 
         Ok(true)

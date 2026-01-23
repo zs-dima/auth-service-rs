@@ -333,11 +333,6 @@ CREATE TABLE sessions (
 COMMENT ON TABLE sessions IS 'User sessions - validity controlled solely by expires_at';
 COMMENT ON COLUMN sessions.refresh_token IS 'SHA-256 hash of the refresh token (32 bytes)';
 
-CREATE UNIQUE INDEX IF NOT EXISTS session_user_device_ux
-  ON auth.sessions (id_user, device_id)
-  WHERE device_id IS NOT NULL;
-COMMENT ON INDEX auth.session_user_device_ux IS 'Enables session upsert per user+device; prevents duplicate sessions';
-
 -- Active sessions per user
 CREATE INDEX session_id_user_ix
   ON sessions (id_user, expires_at DESC);
@@ -567,10 +562,10 @@ COMMENT ON FUNCTION auth.link_oauth_provider IS 'Upserts OAuth provider link; me
 -- =============================================================================
 -- SESSION MANAGEMENT FUNCTIONS
 -- =============================================================================
--- Session management design:
--- 1) Explicit logout by user          → SQLx: DELETE by device_id
--- 2) User terminates from settings    → SQLx: DELETE by device_id + user_id
--- 3) Same user_id + device_id login   → Upsert via ON CONFLICT (session.rs)
+-- Session revocation scenarios:
+-- 1) Explicit logout by user          → SQLx: DELETE by token_hash
+-- 2) User terminates from settings    → SQLx: DELETE by token_hash + user_id
+-- 3) Same user_id + device_id login   → Trigger: sessions_single_device_tr (soft-expire)
 -- 4) Session lifetime expired         → Query: expires_at check + cleanup job
 --
 -- Design rationale:
@@ -612,30 +607,97 @@ $$;
 COMMENT ON FUNCTION auth.touch_session IS 'Validates and extends session; returns (user_id, new_expiry) or empty if invalid';
 
 -- =============================================================================
--- SESSION REVOCATION - Implemented as SQLx queries for compile-time safety
+-- SESSION REVOCATION - Recommended as SQLx queries for simplicity
 -- =============================================================================
--- Simple DELETE operations are implemented in Rust with SQLx for better type
--- safety and compile-time verification. See: crates/db/src/repository/session.rs
---
--- Patterns used in Rust code:
+-- These are simple DELETE operations. Keeping as functions for reference,
+-- but consider using direct SQLx queries in Rust for better type safety:
 --
 -- Revoke single session (logout):
 --   DELETE FROM auth.sessions WHERE refresh_token = $1 RETURNING id_user
 --
--- Revoke session by device_id:
---   DELETE FROM auth.sessions WHERE id_user = $1 AND device_id = $2 AND expires_at > NOW()
+-- Revoke user's session (settings screen):
+--   DELETE FROM auth.sessions WHERE refresh_token = $1 AND id_user = $2 RETURNING TRUE
 --
 -- Revoke all user sessions:
---   DELETE FROM auth.sessions WHERE id_user = $1 AND expires_at > NOW()
+--   DELETE FROM auth.sessions WHERE id_user = $1 AND expires_at > now()
 --
--- Revoke other sessions (keep current device):
---   DELETE FROM auth.sessions WHERE id_user = $1 AND (device_id IS NULL OR device_id <> $2) AND expires_at > NOW()
+-- Revoke other sessions (keep current):
+--   DELETE FROM auth.sessions WHERE id_user = $1 AND refresh_token <> $2 AND expires_at > now()
 --
 -- List user sessions (settings screen):
---   SELECT ..., (refresh_token = $2) AS is_current
---   FROM auth.sessions WHERE id_user = $1 AND expires_at > NOW()
+--   SELECT device_id, device_name, device_type, client_version, ip_address, ip_country,
+--          created_at, last_seen_at, expires_at,
+--          (refresh_token = $2) AS is_current
+--   FROM auth.sessions WHERE id_user = $1 AND expires_at > now()
 --   ORDER BY last_seen_at DESC
 -- =============================================================================
+
+-- Revoke session (for explicit logout)
+-- Returns id_user if session was found and revoked, NULL otherwise
+CREATE OR REPLACE FUNCTION auth.revoke_session(p_token_hash BYTEA)
+RETURNS UUID
+LANGUAGE SQL
+STRICT          -- Returns NULL if input is NULL
+VOLATILE
+SECURITY INVOKER
+PARALLEL UNSAFE
+SET search_path = auth, public
+AS $$
+  DELETE FROM auth.sessions
+  WHERE refresh_token = p_token_hash
+  RETURNING id_user;
+$$;
+COMMENT ON FUNCTION auth.revoke_session IS 'Deletes session by token hash; returns user_id if found';
+
+-- Revoke all active sessions for user (logout everywhere)
+-- Returns count of sessions revoked
+CREATE OR REPLACE FUNCTION auth.revoke_all_user_sessions(p_id_user UUID)
+RETURNS INT
+LANGUAGE plpgsql
+STRICT          -- Returns NULL if input is NULL
+VOLATILE
+SECURITY INVOKER
+PARALLEL UNSAFE
+SET search_path = auth, public
+AS $$
+DECLARE
+  v_count INT;
+BEGIN
+  DELETE FROM auth.sessions
+  WHERE id_user = p_id_user
+    AND expires_at > now();
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+COMMENT ON FUNCTION auth.revoke_all_user_sessions IS 'Revokes all active sessions for user; returns count deleted';
+
+-- Revoke all sessions EXCEPT current (logout other devices)
+-- Returns count of sessions revoked
+CREATE OR REPLACE FUNCTION auth.revoke_other_sessions(
+  p_id_user UUID,
+  p_current_token_hash BYTEA
+)
+RETURNS INT
+LANGUAGE plpgsql
+STRICT
+VOLATILE
+SECURITY INVOKER
+PARALLEL UNSAFE
+SET search_path = auth, public
+AS $$
+DECLARE
+  v_count INT;
+BEGIN
+  DELETE FROM auth.sessions
+  WHERE id_user = p_id_user
+    AND refresh_token <> p_current_token_hash
+    AND expires_at > now();
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+COMMENT ON FUNCTION auth.revoke_other_sessions IS 'Revokes all sessions except current; returns count deleted';
 
 -- Cleanup expired sessions (run periodically via pg_cron or app scheduler)
 -- Deletes sessions that have been expired for at least p_grace_period
@@ -718,120 +780,6 @@ END;
 $$;
 COMMENT ON FUNCTION auth.cleanup_expired_oauth_states IS 'Batch-deletes expired OAuth states; run every 15 min via pg_cron';
 
--- =============================================================================
--- EMAIL VERIFICATION
--- =============================================================================
--- Atomic email verification: validate token → check status → consume → verify → activate
--- Returns user data on success for immediate session creation (auto-login)
--- Single round-trip, prevents race conditions and partial failures
-
--- Verify email atomically: validate token, check user status, consume token,
--- mark email verified, activate pending accounts, return user data.
---
--- Returns: User row with profile data for session creation
--- Errors:
---   - P0001 'TOKEN_INVALID': Token not found, expired, or already used
---   - P0001 'ACCOUNT_SUSPENDED': Account is suspended or deleted
---   - P0001 'USER_NOT_FOUND': User record not found (shouldn't happen)
-CREATE OR REPLACE FUNCTION auth.verify_email(p_token_hash BYTEA)
-RETURNS TABLE (
-  id UUID,
-  role TEXT,
-  email TEXT,
-  email_verified BOOLEAN,
-  phone TEXT,
-  phone_verified BOOLEAN,
-  status auth.user_status,
-  password TEXT,
-  failed_login_attempts SMALLINT,
-  locked_until TIMESTAMPTZ,
-  created_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ,
-  deleted_at TIMESTAMPTZ,
-  display_name TEXT,
-  avatar_url TEXT,
-  locale TEXT,
-  timezone TEXT
-)
-LANGUAGE plpgsql
-VOLATILE
-SECURITY INVOKER
-PARALLEL UNSAFE
-SET search_path = auth, public
-AS $$
-DECLARE
-  v_user_id UUID;
-  v_status auth.user_status;
-BEGIN
-  -- 1. Validate token and get user_id (without consuming yet)
-  SELECT evt.id_user INTO v_user_id
-    FROM auth.email_verification_tokens evt
-   WHERE evt.token_hash = p_token_hash
-     AND evt.used_at IS NULL
-     AND evt.expires_at > now();
-
-  IF v_user_id IS NULL THEN
-    RAISE EXCEPTION 'TOKEN_INVALID'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 2. Check user status before any modifications
-  SELECT u.status INTO v_status
-    FROM auth.users u
-   WHERE u.id = v_user_id
-     AND u.deleted_at IS NULL;
-
-  IF v_status IS NULL THEN
-    RAISE EXCEPTION 'USER_NOT_FOUND'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  IF v_status IN ('suspended', 'deleted') THEN
-    RAISE EXCEPTION 'ACCOUNT_SUSPENDED'
-      USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 3. Consume token (mark as used)
-  UPDATE auth.email_verification_tokens evt
-     SET used_at = now()
-   WHERE evt.token_hash = p_token_hash
-     AND evt.used_at IS NULL;
-
-  -- 4. Mark email verified and activate pending accounts
-  UPDATE auth.users u
-     SET email_verified = TRUE,
-         status = CASE
-             WHEN u.status = 'pending' THEN 'active'::auth.user_status
-             ELSE u.status
-         END
-   WHERE u.id = v_user_id;
-
-  -- 5. Return updated user with profile
-  RETURN QUERY
-  SELECT u.id,
-         u.role::TEXT,
-         u.email::TEXT,
-         u.email_verified,
-         u.phone::TEXT,
-         u.phone_verified,
-         u.status,
-         u.password,
-         u.failed_login_attempts,
-         u.locked_until,
-         u.created_at,
-         u.updated_at,
-         u.deleted_at,
-         p.display_name,
-         p.avatar_url,
-         p.locale::TEXT,
-         p.timezone::TEXT
-    FROM auth.users u
-    JOIN auth.user_profiles p ON p.id_user = u.id
-   WHERE u.id = v_user_id;
-END;
-$$;
-COMMENT ON FUNCTION auth.verify_email IS 'Atomic email verification with auto-login; returns user data or raises exception';
-
 -- Consume OAuth state (atomic get-and-delete for PKCE flow)
 -- Returns the state data if valid, NULL if not found or expired
 -- CRITICAL: Single-use token - delete on read prevents replay attacks
@@ -874,6 +822,31 @@ CREATE TRIGGER user_profiles_updated_at_tr
 CREATE TRIGGER providers_updated_at_tr
   BEFORE UPDATE ON providers
   FOR EACH ROW EXECUTE FUNCTION auth.set_updated_at();
+
+-- Auto-expire any existing session for same user and device (ensure single active session per device)
+CREATE OR REPLACE FUNCTION auth.sessions_expire_old_same_device()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+VOLATILE
+SECURITY INVOKER
+SET search_path = auth, public
+AS $$
+BEGIN
+  IF NEW.device_id IS NOT NULL THEN
+    UPDATE auth.sessions
+    SET expires_at = clock_timestamp()
+    WHERE id_user = NEW.id_user
+      AND device_id = NEW.device_id
+      AND expires_at > clock_timestamp()
+      AND refresh_token <> NEW.refresh_token;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER sessions_single_device_tr
+  AFTER INSERT ON sessions
+  FOR EACH ROW EXECUTE FUNCTION auth.sessions_expire_old_same_device();
 
 -- =============================================================================
 -- V_USERS_FULL VIEW

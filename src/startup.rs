@@ -11,6 +11,7 @@ use auth_mailjet::{MailjetConfig, MailjetService};
 use auth_proto::auth::auth_service_server::AuthServiceServer;
 use auth_proto::users::user_service_server::UserServiceServer;
 use auth_storage::{S3Config, S3Storage};
+use auth_telemetry::PrometheusHandle;
 use axum::Router;
 use http::Request;
 use secrecy::SecretString;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub email: Option<EmailProvider>,
     /// URL builder for frontend redirects and email links.
     pub urls: UrlBuilder,
+    /// Prometheus metrics handle (None if metrics disabled).
+    pub metrics: Option<PrometheusHandle>,
 }
 
 /// Build and configure the complete application.
@@ -54,7 +57,10 @@ pub struct AppState {
 /// # Panics
 /// Panics if JWT secret is not configured (validated in `Config::init`).
 #[allow(clippy::similar_names, clippy::too_many_lines)]
-pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> {
+pub async fn build_app(
+    config: &Config,
+    metrics_handle: Option<auth_telemetry::PrometheusHandle>,
+) -> anyhow::Result<(Router, SocketAddr)> {
     // Create shared JWT validator once
     let jwt_secret = config
         .jwt_secret_key()
@@ -110,6 +116,8 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
         refresh_token_ttl_days: config.refresh_token_ttl_days,
         password_reset_ttl_minutes: config.password_reset_ttl_minutes,
         email_verification_ttl_hours: config.email_verification_ttl_hours,
+        max_failed_login_attempts: config.max_failed_login_attempts,
+        lockout_duration_minutes: config.lockout_duration_minutes,
     };
 
     // Build user service config
@@ -161,6 +169,7 @@ pub async fn build_app(config: &Config) -> anyhow::Result<(Router, SocketAddr)> 
         s3: s3_storage,
         email: email_service,
         urls: UrlBuilder::new(&domain),
+        metrics: metrics_handle,
     };
 
     // Build REST routes
@@ -263,8 +272,9 @@ fn init_mailjet(config: &Config) -> Option<EmailProvider> {
     let api_key = config.mailjet_api_key.as_ref()?;
     let api_secret = config.mailjet_api_secret()?;
     let (sender_name, sender_email) = config.parse_email_sender()?;
-    let password_reset_template_id = config.mailjet_password_reset_template_id?;
+    let password_reset_template_id = config.mailjet_password_recovery_start_template_id?;
     let welcome_template_id = config.mailjet_welcome_template_id.unwrap_or(0);
+    let email_verification_template_id = config.mailjet_email_verification_template_id.unwrap_or(0);
     let password_changed_template_id = config.mailjet_password_changed_template_id.unwrap_or(0);
 
     let mailjet_config = MailjetConfig {
@@ -274,6 +284,7 @@ fn init_mailjet(config: &Config) -> Option<EmailProvider> {
         sender_email,
         password_reset_template_id,
         welcome_template_id,
+        email_verification_template_id,
         password_changed_template_id,
     };
 

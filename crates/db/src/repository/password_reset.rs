@@ -18,37 +18,30 @@ impl PasswordResetRepository {
     }
 
     /// Create a new password reset token.
-    /// Invalidates any existing tokens for the user.
+    /// Atomically invalidates any existing tokens and creates the new one.
     pub async fn create_token(
         &self,
         params: CreatePasswordResetTokenParams<'_>,
     ) -> Result<Uuid, AppError> {
-        // Invalidate any existing unused tokens for this user
-        sqlx::query!(
-            r#"
-            UPDATE auth.password_reset_tokens
-               SET used_at = NOW()
-             WHERE id_user = $1
-               AND used_at IS NULL
-               AND expires_at > NOW()
-            "#,
-            params.id_user
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(DbError)?;
-
-        // Create new token
-        sqlx::query_scalar!(
-            r#"
+        // Atomic: invalidate existing tokens and create new one in single statement
+        // Uses CTE to ensure atomicity and prevent race conditions
+        sqlx::query_scalar::<_, Uuid>(
+            r"
+            WITH invalidated AS (
+                UPDATE auth.password_reset_tokens
+                   SET used_at = NOW()
+                 WHERE id_user = $1
+                   AND used_at IS NULL
+                   AND expires_at > NOW()
+            )
             INSERT INTO auth.password_reset_tokens (id_user, token_hash, expires_at)
             VALUES ($1, $2, $3)
             RETURNING id
-            "#,
-            params.id_user,
-            &params.token_hash,
-            params.expires_at
+            ",
         )
+        .bind(params.id_user)
+        .bind(params.token_hash)
+        .bind(params.expires_at)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| DbError(e).into())

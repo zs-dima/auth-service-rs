@@ -48,7 +48,6 @@
 //! 3. User is redirected to frontend success/error page
 
 use auth_core::TokenGenerator;
-use auth_telemetry::PrometheusHandle;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -118,19 +117,16 @@ pub fn rest_routes(state: AppState) -> Router {
         .route("/health/live", get(|| async { "OK" }))
         .route("/health/ready", get(readiness_handler))
         .route("/verify-email", get(verify_email_handler))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
 }
 
-/// Build REST routes with metrics endpoint.
-#[allow(dead_code)] // Available for metrics endpoint integration
-pub fn rest_routes_with_metrics(state: AppState, metrics_handle: PrometheusHandle) -> Router {
-    rest_routes(state).route(
-        "/metrics",
-        get(move || {
-            let handle = metrics_handle.clone();
-            async move { handle.render() }
-        }),
-    )
+async fn metrics_handler(State(state): State<AppState>) -> String {
+    state
+        .metrics
+        .as_ref()
+        .map(auth_telemetry::PrometheusHandle::render)
+        .unwrap_or_default()
 }
 
 async fn readiness_handler(State(state): State<AppState>) -> Json<HealthResponse> {

@@ -413,6 +413,27 @@ impl UserRepository {
         Ok(())
     }
 
+    /// Lock an account until the specified time.
+    pub async fn lock_account(
+        &self,
+        user_id: Uuid,
+        locked_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        sqlx::query!(
+            r#"
+            UPDATE auth.users
+               SET locked_until = $2
+             WHERE id = $1
+            "#,
+            user_id,
+            locked_until
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(DbError)?;
+        Ok(())
+    }
+
     /// Soft delete a user by setting `deleted_at` and status to `deleted`.
     pub async fn delete_user(&self, user_id: Uuid) -> Result<(), AppError> {
         sqlx::query!(

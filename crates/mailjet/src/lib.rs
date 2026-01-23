@@ -9,7 +9,7 @@
 //! - `EMAIL_SENDER` - Sender in format "Name <email@example.com>"
 //! - `MAILJET_API_KEY` - Public API key
 //! - `MAILJET_API_SECRET` - Private API key
-//! - `MAILJET_PASSWORD_RESET_TEMPLATE_ID` - Template ID for password reset
+//! - `MAILJET_PASSWORD_RECOVERY_START_TEMPLATE_ID` - Template ID for password reset
 //!
 //! # Example
 //!
@@ -51,6 +51,8 @@ pub struct MailjetConfig {
     pub password_reset_template_id: u64,
     /// Template ID for welcome emails.
     pub welcome_template_id: u64,
+    /// Template ID for email verification emails.
+    pub email_verification_template_id: u64,
     /// Template ID for password changed confirmation.
     pub password_changed_template_id: u64,
 }
@@ -191,6 +193,39 @@ impl MailjetService {
             .await
     }
 
+    /// Send an email verification email using Mailjet template.
+    ///
+    /// Template variables: `name`, `email`, `url`
+    ///
+    /// # Errors
+    /// Returns `MailjetError::ConfigError` if the email verification template is not configured.
+    /// Returns `MailjetError::SendError` if the email fails to send.
+    #[instrument(skip(self, verification_url), fields(email = %to_email))]
+    pub async fn send_email_verification(
+        &self,
+        to_email: &str,
+        to_name: &str,
+        verification_url: &str,
+    ) -> Result<(), MailjetError> {
+        if self.config.email_verification_template_id == 0 {
+            return Err(MailjetError::ConfigError(
+                "Email verification template ID not configured".to_string(),
+            ));
+        }
+
+        self.send(
+            to_email,
+            to_name,
+            self.config.email_verification_template_id,
+            serde_json::json!({
+                "name": to_name,
+                "email": to_email,
+                "url": verification_url
+            }),
+        )
+        .await
+    }
+
     /// Send a password changed confirmation using Mailjet template.
     ///
     /// Template variables: `name`, `email`
@@ -302,6 +337,7 @@ mod tests {
             sender_email: "noreply@example.com".to_string(),
             password_reset_template_id: 12345,
             welcome_template_id: 12346,
+            email_verification_template_id: 12348,
             password_changed_template_id: 12347,
         }
     }

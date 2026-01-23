@@ -25,6 +25,7 @@ static PUBLIC_ROUTES: phf::Set<&'static str> = phf_set! {
     "RecoveryStart",
     "RecoveryConfirm",
     "RefreshTokens",
+    "ConfirmVerification",
     // gRPC public methods (OAuth)
     "GetOAuthUrl",
     "ExchangeOAuthCode",
@@ -193,6 +194,7 @@ mod tests {
         assert!(is_public_route("/auth.AuthService/Authenticate"));
         assert!(is_public_route("/auth.AuthService/SignUp"));
         assert!(is_public_route("/auth.AuthService/RecoveryStart"));
+        assert!(is_public_route("/auth.AuthService/ConfirmVerification"));
         assert!(is_public_route("/grpc.health.v1.Health/Check"));
         assert!(is_public_route("/health"));
         assert!(is_public_route("/health/ready"));

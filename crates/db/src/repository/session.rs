@@ -18,7 +18,10 @@ impl SessionRepository {
         Self { pool }
     }
 
-    /// Create a new session.
+    /// Create or update a session (upsert by user + device_id).
+    ///
+    /// Uses `ON CONFLICT` to update existing session for the same device,
+    /// preventing session table bloat on token refresh.
     pub async fn create_session(&self, params: CreateSessionParams<'_>) -> Result<(), AppError> {
         sqlx::query(
             "INSERT INTO auth.sessions (
@@ -26,7 +29,19 @@ impl SessionRepository {
                 device_id, device_name, device_type, client_version,
                 ip_created_by, ip_address, ip_country, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10)",
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10)
+            ON CONFLICT (id_user, device_id) WHERE device_id IS NOT NULL
+            DO UPDATE SET
+                refresh_token = EXCLUDED.refresh_token,
+                expires_at = EXCLUDED.expires_at,
+                device_name = EXCLUDED.device_name,
+                device_type = EXCLUDED.device_type,
+                client_version = EXCLUDED.client_version,
+                ip_address = EXCLUDED.ip_address,
+                ip_country = EXCLUDED.ip_country,
+                metadata = EXCLUDED.metadata,
+                last_seen_at = NOW(),
+                activity_count = auth.sessions.activity_count + 1",
         )
         .bind(params.id_user)
         .bind(params.refresh_token_hash)
@@ -152,6 +167,26 @@ impl SessionRepository {
         .bind(user_id)
         .bind(current_token_hash)
         .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(e).into())
+    }
+
+    /// Check if an active session exists for a user and device.
+    pub async fn session_exists(&self, user_id: Uuid, device_id: &str) -> Result<bool, AppError> {
+        sqlx::query_scalar::<_, bool>(
+            r"
+            SELECT EXISTS(
+                SELECT 1
+                  FROM auth.sessions
+                 WHERE id_user = $1
+                   AND device_id = $2
+                   AND expires_at > NOW()
+            )
+            ",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| DbError(e).into())
     }

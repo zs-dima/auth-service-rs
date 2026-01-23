@@ -17,10 +17,10 @@ mod verification;
 
 use std::sync::Arc;
 
-use auth_core::{SessionTokens, StatusExt, StrExt, ToProtoTimestamp, TokenGenerator};
+use auth_core::{SessionTokens, StatusExt, StrExt, ToProtoDuration, ToProtoTimestamp, TokenGenerator};
 use auth_db::{UserWithProfile, role_to_proto, status_to_proto};
 use auth_proto::auth::{
-    AuthResponse, AuthStatus, ClientInfo, IdentifierType, TokenPair, UserSnapshot,
+    AuthResponse, AuthStatus, ClientInfo, IdentifierType, LockoutInfo, TokenPair, UserSnapshot,
 };
 use tonic::{Request, Status};
 use uuid::Uuid;
@@ -247,6 +247,28 @@ impl AuthService {
             user: None,
             mfa_challenge: None,
             lockout_info: None,
+            message: String::new(),
+        }
+    }
+
+    /// Creates locked account response with lockout info.
+    fn locked_auth(
+        locked_until: chrono::DateTime<chrono::Utc>,
+        failed_attempts: i16,
+        max_attempts: i32,
+    ) -> AuthResponse {
+        let retry_after_secs = (locked_until - chrono::Utc::now()).num_seconds().max(0);
+        AuthResponse {
+            status: AuthStatus::Locked.into(),
+            tokens: None,
+            user: None,
+            mfa_challenge: None,
+            lockout_info: Some(LockoutInfo {
+                retry_after: Some(retry_after_secs.to_proto_duration()),
+                failed_attempts: failed_attempts.into(),
+                max_attempts,
+                locked_until: Some(locked_until.to_proto_timestamp()),
+            }),
             message: String::new(),
         }
     }

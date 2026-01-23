@@ -1,5 +1,3 @@
-version: "3.9"
-
 x-logging: &loki-logging
   driver: loki
   options:
@@ -88,7 +86,7 @@ services:
       - EMAIL_PROVIDER=mailjet
       - EMAIL_SENDER=Auth Robot <no-reply@dmitrii.app>
       - MAILJET_WELCOME_TEMPLATE_ID=7654682
-      - MAILJET_PASSWORD_RESET_TEMPLATE_ID=7654629
+      - MAILJET_PASSWORD_RECOVERY_START_TEMPLATE_ID=7654629
       - MAILJET_PASSWORD_CHANGED_TEMPLATE_ID=7654700
       - GEOIP_DB_PATH=/data/GeoLite2-Country.mmdb
     # Health checks: Traefik probes /health endpoint (scratch image has no shell)

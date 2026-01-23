@@ -59,7 +59,7 @@ impl AuthServiceTrait for AuthService {
         let auth = request.auth()?;
         tracing::Span::current().record("user_id", auth.user_id.to_string());
 
-        self.sign_out(auth.user_id).await?;
+        self.sign_out(auth.user_id, &auth.device_id).await?;
         Ok(Response::new(()))
     }
 
@@ -99,7 +99,9 @@ impl AuthServiceTrait for AuthService {
         request: Request<ValidateCredentialsRequest>,
     ) -> Result<Response<ValidateCredentialsResponse>, Status> {
         let auth = request.auth()?;
-        let valid = self.validate_credentials(auth.user_id).await?;
+        let valid = self
+            .validate_credentials(auth.user_id, &auth.device_id)
+            .await?;
         Ok(Response::new(ValidateCredentialsResponse {
             valid,
             user: None,

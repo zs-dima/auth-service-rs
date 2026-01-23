@@ -1,6 +1,6 @@
 # Copilot Instructions
 
-Rust 1.92 gRPC authentication service using Tonic, SQLx, and Tokio.
+Rust 1.93 gRPC authentication service using Tonic, SQLx, and Tokio.
 
 ## Code Style
 - Prefer `.to_string()` over `.into()` or `.to_owned()`
