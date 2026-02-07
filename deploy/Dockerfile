@@ -14,7 +14,7 @@ ARG BIN=auth-service
 COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY crates crates
-COPY proto proto
+COPY api/proto api/proto
 # COPY assets assets # Embed assets during build if needed
 
 # Build static musl binary (lto + strip configured in Cargo.toml)

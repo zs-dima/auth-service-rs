@@ -1,17 +1,26 @@
 //! Structured error handling for gRPC services.
 //!
 //! Provides type-safe error handling with automatic conversion to gRPC Status codes.
+//! Uses the Google `google.rpc.Status` rich error model via `tonic-types` to provide
+//! machine-readable error details alongside human-readable messages.
+//!
 //! Internal details are logged but never exposed to clients.
 
 use std::fmt::Display;
 
 use thiserror::Error;
 use tonic::Status;
+use tonic_types::{ErrorDetails, StatusExt as TonicStatusExt};
 use tracing::error;
+
+/// Error domain for `ErrorInfo` details.
+const ERROR_DOMAIN: &str = "auth-service";
 
 /// Application error type with automatic Status conversion.
 ///
 /// Internal details are logged but sanitized messages are sent to clients.
+/// Each variant maps to a gRPC status code and includes rich error details
+/// following the `google.rpc` error model.
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Not found: {0}")]
@@ -61,12 +70,31 @@ impl AppError {
 impl From<AppError> for Status {
     fn from(error: AppError) -> Self {
         match &error {
-            AppError::NotFound(msg) => Status::not_found(msg),
-            AppError::Unauthenticated(msg) => Status::unauthenticated(msg),
-            AppError::PermissionDenied(msg) => Status::permission_denied(msg),
-            AppError::InvalidArgument(msg) => Status::invalid_argument(msg),
-            AppError::Conflict(msg) | AppError::AlreadyExists(msg) => Status::already_exists(msg),
-            AppError::Unavailable(msg) => Status::unavailable(msg),
+            AppError::NotFound(msg) => {
+                let details = ErrorDetails::with_error_info(ERROR_DOMAIN, "NOT_FOUND", []);
+                tonic::Status::with_error_details(tonic::Code::NotFound, msg, details)
+            }
+            AppError::Unauthenticated(msg) => {
+                let details = ErrorDetails::with_error_info(ERROR_DOMAIN, "UNAUTHENTICATED", []);
+                tonic::Status::with_error_details(tonic::Code::Unauthenticated, msg, details)
+            }
+            AppError::PermissionDenied(msg) => {
+                let details = ErrorDetails::with_error_info(ERROR_DOMAIN, "PERMISSION_DENIED", []);
+                tonic::Status::with_error_details(tonic::Code::PermissionDenied, msg, details)
+            }
+            AppError::InvalidArgument(msg) => {
+                let mut details = ErrorDetails::new();
+                details.add_bad_request_violation("", msg);
+                tonic::Status::with_error_details(tonic::Code::InvalidArgument, msg, details)
+            }
+            AppError::Conflict(msg) | AppError::AlreadyExists(msg) => {
+                let details = ErrorDetails::with_error_info(ERROR_DOMAIN, "ALREADY_EXISTS", []);
+                tonic::Status::with_error_details(tonic::Code::AlreadyExists, msg, details)
+            }
+            AppError::Unavailable(msg) => {
+                let details = ErrorDetails::with_error_info(ERROR_DOMAIN, "UNAVAILABLE", []);
+                tonic::Status::with_error_details(tonic::Code::Unavailable, msg, details)
+            }
             AppError::Internal(msg) => {
                 error!(error = %msg, "Internal error");
                 Status::internal("Internal server error")
@@ -95,16 +123,19 @@ impl<T, E: Display> StatusExt<T> for Result<T, E> {
 
 /// Extension trait for Option types.
 pub trait OptionStatusExt<T> {
-    /// Convert `None` to `not_found` Status.
+    /// Convert `None` to `not_found` Status with rich error details.
     ///
     /// # Errors
-    /// Returns `Status::not_found` if the option is `None`.
+    /// Returns `Status::not_found` with `ErrorInfo` if the option is `None`.
     fn ok_or_not_found(self, msg: &'static str) -> Result<T, Status>;
 }
 
 impl<T> OptionStatusExt<T> for Option<T> {
     fn ok_or_not_found(self, msg: &'static str) -> Result<T, Status> {
-        self.ok_or_else(|| Status::not_found(msg))
+        self.ok_or_else(|| {
+            let details = ErrorDetails::with_error_info(ERROR_DOMAIN, "NOT_FOUND", []);
+            tonic::Status::with_error_details(tonic::Code::NotFound, msg, details)
+        })
     }
 }
 

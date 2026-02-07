@@ -172,6 +172,11 @@ impl UserService {
     }
 
     /// Updates an existing user (admin only).
+    ///
+    /// Follows Google AIP-134: if `update_mask` is set, only the listed field
+    /// paths are applied. Otherwise all `optional` fields present in the
+    /// request are applied (partial-update semantics).
+    #[allow(clippy::too_many_lines)]
     pub(super) async fn update_user(
         &self,
         req: UpdateUserRequest,
@@ -191,36 +196,80 @@ impl UserService {
             .await
             .map_err(|_| Status::not_found("User not found"))?;
 
-        // Build updated values from optional fields
-        let email = req
-            .email
-            .as_ref()
-            .map(|e| canonical_email(e))
-            .or(existing.email.clone());
-
-        let phone = req
-            .phone
-            .as_ref()
-            .map(|p| canonical_phone(p))
-            .or(existing.phone.clone());
-
-        let role = req
-            .role
-            .map(|r| proto_to_role(r).map_err(Status::invalid_argument))
-            .transpose()?
-            .unwrap_or(existing.role.as_str());
-
-        let status = req.status.map_or(existing.status, |s| match s {
-            s if s == ProtoUserStatus::Pending as i32 => UserStatus::Pending,
-            s if s == ProtoUserStatus::Active as i32 => UserStatus::Active,
-            s if s == ProtoUserStatus::Suspended as i32 => UserStatus::Suspended,
-            s if s == ProtoUserStatus::Deleted as i32 => UserStatus::Deleted,
-            _ => existing.status,
+        // AIP-134: when update_mask is present, only update the listed paths.
+        // Mask paths use snake_case from the proto field names.
+        let mask_paths: Option<Vec<&str>> = req.update_mask.as_ref().map(|m| {
+            m.paths
+                .iter()
+                .map(String::as_str)
+                .collect()
         });
 
-        let name = req.name.as_deref().unwrap_or(&existing.display_name);
-        let locale = req.locale.as_deref().unwrap_or(&existing.locale);
-        let timezone = req.timezone.as_deref().unwrap_or(&existing.timezone);
+        let has_path = |path: &str| -> bool {
+            match &mask_paths {
+                Some(paths) => paths.contains(&path),
+                // No mask → apply all present optional fields
+                None => true,
+            }
+        };
+
+        // Build updated values from optional fields, respecting the mask
+        let email = if has_path("email") {
+            req.email
+                .as_ref()
+                .map(|e| canonical_email(e))
+                .or(existing.email.clone())
+        } else {
+            existing.email.clone()
+        };
+
+        let phone = if has_path("phone") {
+            req.phone
+                .as_ref()
+                .map(|p| canonical_phone(p))
+                .or(existing.phone.clone())
+        } else {
+            existing.phone.clone()
+        };
+
+        let role = if has_path("role") {
+            req.role
+                .map(|r| proto_to_role(r).map_err(Status::invalid_argument))
+                .transpose()?
+                .unwrap_or(existing.role.as_str())
+        } else {
+            existing.role.as_str()
+        };
+
+        let status = if has_path("status") {
+            req.status.map_or(existing.status, |s| match s {
+                s if s == ProtoUserStatus::Pending as i32 => UserStatus::Pending,
+                s if s == ProtoUserStatus::Active as i32 => UserStatus::Active,
+                s if s == ProtoUserStatus::Suspended as i32 => UserStatus::Suspended,
+                s if s == ProtoUserStatus::Deleted as i32 => UserStatus::Deleted,
+                _ => existing.status,
+            })
+        } else {
+            existing.status
+        };
+
+        let name = if has_path("name") {
+            req.name.as_deref().unwrap_or(&existing.display_name)
+        } else {
+            &existing.display_name
+        };
+
+        let locale = if has_path("locale") {
+            req.locale.as_deref().unwrap_or(&existing.locale)
+        } else {
+            &existing.locale
+        };
+
+        let timezone = if has_path("timezone") {
+            req.timezone.as_deref().unwrap_or(&existing.timezone)
+        } else {
+            &existing.timezone
+        };
 
         self.ctx
             .db()

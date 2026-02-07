@@ -17,6 +17,10 @@ prost-types = "0.14"
 prost-validate = { version = "0.2", features = ["derive"] }
 uuid = "1"
 
+# Serde for JSON serialization (REST/SSE endpoints)
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
 # Required by prost-validate derive macro for pattern validation
 regex = "1"
 

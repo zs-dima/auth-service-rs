@@ -55,7 +55,7 @@ High-performance authentication gRPC service built with Rust 1.93, Tonic, and SQ
 cp configs/.env.example configs/development.env
 
 # 2. Run database migrations
-make db
+make db-migrate
 
 # 3. Start the service
 make run
@@ -238,6 +238,7 @@ sequenceDiagram
 ```
 
 **Key features:**
+
 - **Atomic operation**: Single DB function `auth.verify_email()` prevents race conditions
 - **Status check before consume**: Suspended accounts can't verify their email
 - **Auto-login (gRPC only)**: User gets tokens immediately after verification
@@ -299,6 +300,7 @@ sequenceDiagram
 ### gRPC (AuthService)
 
 #### Authentication
+
 - `Authenticate` — Login with email/phone + password
 - `SignUp` — Register new account
 - `RefreshTokens` — Refresh access token
@@ -306,15 +308,18 @@ sequenceDiagram
 - `SignOut` — End session (by device_id)
 
 #### Verification
+
 - `RequestVerification` — Resend email verification
 - `ConfirmVerification` — Verify token and auto-login (returns tokens)
 
 #### Password & Recovery
+
 - `ChangePassword` — Change password (requires current password)
 - `RecoveryStart` — Request password reset (OWASP-compliant)
 - `RecoveryConfirm` — Complete password reset with token
 
 #### Sessions
+
 - `ListSessions` — List all user sessions with device info
 - `RevokeSession` — Revoke specific session by device_id
 - `RevokeOtherSessions` — Revoke all sessions except current
@@ -322,6 +327,7 @@ sequenceDiagram
 ### gRPC (UserService)
 
 #### User Management (Admin)
+
 - `ListUsers` — Stream all users with full profile
 - `ListUsersInfo` — Stream user summaries (id, name, email)
 - `CreateUser` — Create user with optional welcome email
@@ -329,6 +335,7 @@ sequenceDiagram
 - `SetPassword` — Admin password reset (no current password required)
 
 #### Avatars
+
 - `GetAvatarUploadUrl` — Get presigned S3 upload URL
 - `ConfirmAvatarUpload` — Confirm and set avatar after upload
 - `DeleteAvatar` — Remove user avatar
@@ -336,11 +343,13 @@ sequenceDiagram
 ### Planned APIs (Not Implemented)
 
 #### OAuth 2.0
+
 - `GetOAuthUrl` — Get authorization URL with PKCE
 - `ExchangeOAuthCode` — Exchange code for tokens
 - `LinkOAuthProvider` / `UnlinkOAuthProvider` — Manage linked accounts
 
 #### MFA
+
 - `VerifyMfa` — Complete MFA challenge
 - `GetMfaStatus` / `SetupMfa` / `ConfirmMfaSetup` / `DisableMfa`
 
@@ -362,6 +371,15 @@ make watch      # Auto-rebuild on changes
 make test       # Run tests
 make fmt lint   # Format and lint
 make pre-commit # All checks before commit
+```
+
+### API Development
+
+```bash
+make openapi        # Generate OpenAPI 3.1 spec from proto
+make proto          # Regenerate Rust code from proto
+make proto-sync     # Sync vendored proto deps from BSR
+make proto-breaking # Check for breaking proto changes
 ```
 
 ### Testing with grpcurl

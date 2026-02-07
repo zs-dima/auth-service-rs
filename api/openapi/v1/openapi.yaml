@@ -1,0 +1,1840 @@
+openapi: 3.1.0
+info:
+  title: Auth Service API
+  description: Authentication and user management gRPC/REST API
+  version: 0.1.0
+paths:
+  /health/live:
+    get:
+      tags:
+      - OperationsService
+      description: "Kubernetes liveness probe.\r\n\r\n Returns plain text \"OK\" when the process is alive."
+      operationId: OperationsService_LivenessCheck
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/operations.v1.LivenessCheckResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /health/ready:
+    get:
+      tags:
+      - OperationsService
+      description: "Kubernetes readiness probe with dependency health checks.\r\n\r\n Returns JSON with database and S3 storage connectivity status."
+      operationId: OperationsService_ReadinessCheck
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/operations.v1.HealthResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /metrics:
+    get:
+      tags:
+      - OperationsService
+      description: "Prometheus metrics endpoint.\r\n\r\n Returns Prometheus text exposition format when metrics collection is\r\n enabled. Content-Type: text/plain; version=0.0.4; charset=utf-8"
+      operationId: OperationsService_Metrics
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/operations.v1.MetricsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/authenticate:
+    post:
+      tags:
+      - AuthService
+      description: "Authenticate with identifier (email or phone) and password\r\n Returns AuthResult with tokens on success, or error status with lockout\r\n info"
+      operationId: AuthService_Authenticate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.AuthenticateRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.AuthResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/credentials:
+    get:
+      tags:
+      - AuthService
+      description: Validate current session/credentials
+      operationId: AuthService_ValidateCredentials
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.ValidateCredentialsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/mfa/disable:
+    post:
+      tags:
+      - AuthService
+      description: Disable MFA (requires password verification)
+      operationId: AuthService_DisableMfa
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.DisableMfaRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/mfa/setup:
+    post:
+      tags:
+      - AuthService
+      description: Begin MFA setup (returns secret/challenge based on method)
+      operationId: AuthService_SetupMfa
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.SetupMfaRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.SetupMfaResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/mfa/setup/confirm:
+    post:
+      tags:
+      - AuthService
+      description: Confirm MFA setup with verification code
+      operationId: AuthService_ConfirmMfaSetup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.ConfirmMfaSetupRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.ConfirmMfaSetupResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/mfa/status:
+    get:
+      tags:
+      - AuthService
+      description: Get current MFA status for user
+      operationId: AuthService_GetMfaStatus
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.GetMfaStatusResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/mfa/verify:
+    post:
+      tags:
+      - AuthService
+      description: Complete MFA verification (when Authenticate returns MFA_REQUIRED)
+      operationId: AuthService_VerifyMfa
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.VerifyMfaRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.AuthResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/oauth/exchange:
+    post:
+      tags:
+      - AuthService
+      description: Exchange OAuth callback code for tokens (login or register)
+      operationId: AuthService_ExchangeOAuthCode
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.ExchangeOAuthCodeRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.AuthResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/oauth/link:
+    post:
+      tags:
+      - AuthService
+      description: Link OAuth provider to existing authenticated account
+      operationId: AuthService_LinkOAuthProvider
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.LinkOAuthProviderRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/oauth/providers:
+    get:
+      tags:
+      - AuthService
+      description: List linked OAuth providers for current user
+      operationId: AuthService_ListLinkedProviders
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.ListLinkedProvidersResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/oauth/providers/{provider}:
+    delete:
+      tags:
+      - AuthService
+      description: Unlink OAuth provider from account
+      operationId: AuthService_UnlinkOAuthProvider
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          enum:
+          - OAUTH_PROVIDER_UNSPECIFIED
+          - OAUTH_PROVIDER_GOOGLE
+          - OAUTH_PROVIDER_GITHUB
+          - OAUTH_PROVIDER_MICROSOFT
+          - OAUTH_PROVIDER_APPLE
+          - OAUTH_PROVIDER_FACEBOOK
+          type: string
+          format: enum
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/oauth/url:
+    post:
+      tags:
+      - AuthService
+      description: Get OAuth authorization URL with PKCE state
+      operationId: AuthService_GetOAuthUrl
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.GetOAuthUrlRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.GetOAuthUrlResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/password/change:
+    post:
+      tags:
+      - AuthService
+      description: "Change password (requires current password - OWASP requirement)\r\n Use RecoveryStart/Confirm if user forgot password or has no password\r\n For admin password reset without verification, use UserService.SetPassword"
+      operationId: AuthService_ChangePassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.ChangePasswordRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/recovery/confirm:
+    post:
+      tags:
+      - AuthService
+      description: Confirm recovery with token and set new password
+      operationId: AuthService_RecoveryConfirm
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.RecoveryConfirmRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/recovery/start:
+    post:
+      tags:
+      - AuthService
+      description: "Start password recovery (always returns success to prevent enumeration)\r\n Also used by OAuth-only users to add a password to their account"
+      operationId: AuthService_RecoveryStart
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.RecoveryStartRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/sessions:
+    post:
+      tags:
+      - AuthService
+      description: "List all active sessions for current user\r\n POST because refresh_token in body must not appear in URLs/logs"
+      operationId: AuthService_ListSessions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.ListSessionsRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.ListSessionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/sessions/revoke-others:
+    post:
+      tags:
+      - AuthService
+      description: Revoke all sessions except current
+      operationId: AuthService_RevokeOtherSessions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.RevokeOtherSessionsRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.RevokeSessionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/sessions/{deviceId}:
+    delete:
+      tags:
+      - AuthService
+      description: Revoke a specific session by device_id
+      operationId: AuthService_RevokeSession
+      parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/signout:
+    post:
+      tags:
+      - AuthService
+      description: Sign out and invalidate current session
+      operationId: AuthService_SignOut
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.SignOutRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/signup:
+    post:
+      tags:
+      - AuthService
+      description: "Register a new account\r\n Returns AUTH_STATUS_SUCCESS with tokens, or AUTH_STATUS_PENDING if\r\n verification required"
+      operationId: AuthService_SignUp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.SignUpRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.AuthResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/token/refresh:
+    post:
+      tags:
+      - AuthService
+      description: Refresh access token using refresh token
+      operationId: AuthService_RefreshTokens
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.RefreshTokensRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.TokenPair'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/verification/confirm:
+    post:
+      tags:
+      - AuthService
+      description: Confirm verification with token - returns auth tokens for seamless login
+      operationId: AuthService_ConfirmVerification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.ConfirmVerificationRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.AuthResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/auth/verification/request:
+    post:
+      tags:
+      - AuthService
+      description: Request verification code for email or phone (resend)
+      operationId: AuthService_RequestVerification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/auth.v1.RequestVerificationRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users:
+    get:
+      tags:
+      - UserService
+      description: "Load users (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
+      operationId: UserService_ListUsers
+      parameters:
+      - name: userId.value
+        in: query
+        schema:
+          type: string
+      - name: statuses
+        in: query
+        schema:
+          type: array
+          items:
+            enum:
+            - USER_STATUS_UNSPECIFIED
+            - USER_STATUS_PENDING
+            - USER_STATUS_ACTIVE
+            - USER_STATUS_SUSPENDED
+            - USER_STATUS_DELETED
+            type: string
+            format: enum
+      - name: roles
+        in: query
+        schema:
+          type: array
+          items:
+            enum:
+            - USER_ROLE_UNSPECIFIED
+            - USER_ROLE_ADMIN
+            - USER_ROLE_USER
+            - USER_ROLE_GUEST
+            type: string
+            format: enum
+      - name: query
+        in: query
+        schema:
+          type: string
+      - name: pageSize
+        in: query
+        schema:
+          type: integer
+          format: int32
+      - name: pageToken
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.User'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+    post:
+      tags:
+      - UserService
+      description: Create a new user
+      operationId: UserService_CreateUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/users.v1.CreateUserRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.User'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users/info:
+    get:
+      tags:
+      - UserService
+      description: "Load user info (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
+      operationId: UserService_ListUsersInfo
+      parameters:
+      - name: userId.value
+        in: query
+        schema:
+          type: string
+      - name: statuses
+        in: query
+        schema:
+          type: array
+          items:
+            enum:
+            - USER_STATUS_UNSPECIFIED
+            - USER_STATUS_PENDING
+            - USER_STATUS_ACTIVE
+            - USER_STATUS_SUSPENDED
+            - USER_STATUS_DELETED
+            type: string
+            format: enum
+      - name: roles
+        in: query
+        schema:
+          type: array
+          items:
+            enum:
+            - USER_ROLE_UNSPECIFIED
+            - USER_ROLE_ADMIN
+            - USER_ROLE_USER
+            - USER_ROLE_GUEST
+            type: string
+            format: enum
+      - name: query
+        in: query
+        schema:
+          type: string
+      - name: pageSize
+        in: query
+        schema:
+          type: integer
+          format: int32
+      - name: pageToken
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.UserInfo'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users/{user_id.value}:
+    patch:
+      tags:
+      - UserService
+      description: Update user
+      operationId: UserService_UpdateUser
+      parameters:
+      - name: user_id.value
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/users.v1.UpdateUserRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.User'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users/{user_id.value}/avatar:
+    delete:
+      tags:
+      - UserService
+      description: Delete user avatar
+      operationId: UserService_DeleteAvatar
+      parameters:
+      - name: user_id.value
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: userId.value
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users/{user_id.value}/avatar/confirm:
+    post:
+      tags:
+      - UserService
+      description: Confirm avatar upload completed
+      operationId: UserService_ConfirmAvatarUpload
+      parameters:
+      - name: user_id.value
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/users.v1.ConfirmAvatarUploadRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users/{user_id.value}/avatar/upload-url:
+    post:
+      tags:
+      - UserService
+      description: Get presigned URL for avatar upload
+      operationId: UserService_GetAvatarUploadUrl
+      parameters:
+      - name: user_id.value
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/users.v1.GetAvatarUploadUrlRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.GetAvatarUploadUrlResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/users/{user_id.value}/password:
+    put:
+      tags:
+      - UserService
+      description: "Set password (admin only - bypasses current password requirement)\r\n For user self-service password change, use AuthService.ChangePassword"
+      operationId: UserService_SetPassword
+      parameters:
+      - name: user_id.value
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/users.v1.SetPasswordRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content: {}
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+  /v1/verify-email:
+    get:
+      tags:
+      - OperationsService
+      description: "Handle email verification link clicks.\r\n\r\n Flow: Email link → GET /v1/verify-email?token=xxx → 302 redirect →\r\n Frontend. The actual HTTP response is a 302 redirect, not the message body."
+      operationId: OperationsService_VerifyEmail
+      parameters:
+      - name: token
+        in: query
+        description: Verification token from the email link (URL-encoded).
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/operations.v1.VerifyEmailResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.rpc.Status'
+components:
+  schemas:
+    auth.v1.AuthResponse:
+      type: object
+      properties:
+        status:
+          enum:
+          - AUTH_STATUS_UNSPECIFIED
+          - AUTH_STATUS_SUCCESS
+          - AUTH_STATUS_MFA_REQUIRED
+          - AUTH_STATUS_FAILED
+          - AUTH_STATUS_LOCKED
+          - AUTH_STATUS_SUSPENDED
+          - AUTH_STATUS_PENDING
+          type: string
+          description: Status of authentication attempt
+          format: enum
+        tokens:
+          $ref: '#/components/schemas/auth.v1.TokenPair'
+        user:
+          $ref: '#/components/schemas/auth.v1.UserSnapshot'
+        mfaChallenge:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.MfaChallenge'
+          description: Populated on AUTH_STATUS_MFA_REQUIRED
+        lockoutInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.LockoutInfo'
+          description: Populated on AUTH_STATUS_LOCKED
+        message:
+          type: string
+          description: Message for user (generic per OWASP - prevent enumeration)
+      description: "Authentication result\r\n Returns tokens on success, or MFA challenge if second factor required"
+    auth.v1.AuthenticateRequest:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: Primary identifier (email or phone)
+        identifierType:
+          enum:
+          - IDENTIFIER_TYPE_UNSPECIFIED
+          - IDENTIFIER_TYPE_EMAIL
+          - IDENTIFIER_TYPE_PHONE
+          type: string
+          description: Type of identifier
+          format: enum
+        password:
+          type: string
+          description: 'Password (NIST: min 8 chars, check against breach databases)'
+        installationId:
+          allOf:
+          - $ref: '#/components/schemas/core.v1.UUID'
+          description: Installation ID for immediate session
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info for session
+      description: Unified authentication request supporting multiple identifier types
+    auth.v1.ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
+          type: string
+          description: Current password for verification
+        newPassword:
+          type: string
+          description: New password
+      description: Change password (requires current password)
+    auth.v1.ClientInfo:
+      type: object
+      properties:
+        deviceId:
+          type: string
+          description: Unique device/client identifier
+        deviceName:
+          type: string
+          description: Human-readable device name
+        deviceType:
+          type: string
+          description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+        clientVersion:
+          type: string
+          description: App/client version
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+      description: Client information sent with authentication requests
+    auth.v1.ConfirmMfaSetupRequest:
+      type: object
+      properties:
+        setupToken:
+          type: string
+          description: Setup token from `SetupMfaReply`
+        code:
+          type: string
+          description: Verification code
+      description: Confirm MFA setup
+    auth.v1.ConfirmMfaSetupResponse:
+      type: object
+      properties:
+        success:
+          $ref: '#/components/schemas/auth.v1.MfaSetupSuccess'
+        error:
+          $ref: '#/components/schemas/auth.v1.MfaSetupError'
+      description: MFA setup result
+    auth.v1.ConfirmVerificationRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Verification token from email/SMS
+        type:
+          enum:
+          - VERIFICATION_TYPE_UNSPECIFIED
+          - VERIFICATION_TYPE_EMAIL
+          - VERIFICATION_TYPE_PHONE
+          type: string
+          description: Type of verification
+          format: enum
+        installationId:
+          allOf:
+          - $ref: '#/components/schemas/core.v1.UUID'
+          description: Installation ID for session creation
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info for session (enables auto-login after verification)
+    auth.v1.DisableMfaRequest:
+      type: object
+      properties:
+        method:
+          enum:
+          - MFA_METHOD_UNSPECIFIED
+          - MFA_METHOD_TOTP
+          - MFA_METHOD_SMS
+          - MFA_METHOD_EMAIL
+          - MFA_METHOD_RECOVERY_CODE
+          type: string
+          description: Method to disable (or all if not specified)
+          format: enum
+        password:
+          type: string
+          description: "Current password for verification (OWASP: verify identity for sensitive\r\n ops)"
+      description: Disable MFA request
+    auth.v1.ExchangeOAuthCodeRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Authorization code from OAuth callback
+        state:
+          type: string
+          description: State parameter from callback
+        installationId:
+          allOf:
+          - $ref: '#/components/schemas/core.v1.UUID'
+          description: Installation ID
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info
+      description: Exchange OAuth authorization code
+    auth.v1.GetMfaStatusResponse:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether MFA is enabled
+        methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.MfaMethodStatus'
+          description: Configured MFA methods
+        recoveryCodesRemaining:
+          type: integer
+          description: Number of unused recovery codes remaining
+          format: int32
+      description: MFA status for current user
+    auth.v1.GetOAuthUrlRequest:
+      type: object
+      properties:
+        provider:
+          enum:
+          - OAUTH_PROVIDER_UNSPECIFIED
+          - OAUTH_PROVIDER_GOOGLE
+          - OAUTH_PROVIDER_GITHUB
+          - OAUTH_PROVIDER_MICROSOFT
+          - OAUTH_PROVIDER_APPLE
+          - OAUTH_PROVIDER_FACEBOOK
+          type: string
+          description: OAuth provider
+          format: enum
+        redirectUri:
+          type: string
+          description: 'Optional: redirect URI override'
+        scopes:
+          type: array
+          items:
+            type: string
+          description: 'Optional: additional scopes'
+        stateData:
+          type: string
+          description: 'Optional: state data to preserve across OAuth flow'
+      description: Get OAuth authorization URL
+    auth.v1.GetOAuthUrlResponse:
+      type: object
+      properties:
+        authorizationUrl:
+          type: string
+          description: Authorization URL to redirect user
+        state:
+          type: string
+          description: State parameter (for CSRF protection)
+      description: OAuth URL response
+    auth.v1.LinkOAuthProviderRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Authorization code from OAuth callback
+        state:
+          type: string
+          description: State parameter
+      description: Link OAuth provider to existing account
+    auth.v1.LinkedProvider:
+      type: object
+      properties:
+        provider:
+          enum:
+          - OAUTH_PROVIDER_UNSPECIFIED
+          - OAUTH_PROVIDER_GOOGLE
+          - OAUTH_PROVIDER_GITHUB
+          - OAUTH_PROVIDER_MICROSOFT
+          - OAUTH_PROVIDER_APPLE
+          - OAUTH_PROVIDER_FACEBOOK
+          type: string
+          format: enum
+        providerUserId:
+          type: string
+        email:
+          type: string
+        linkedAt:
+          type: string
+          format: date-time
+    auth.v1.ListLinkedProvidersResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.LinkedProvider'
+      description: Linked OAuth providers response
+    auth.v1.ListSessionsRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: Current refresh token to identify which session is active
+      description: Request to list sessions
+    auth.v1.ListSessionsResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.SessionInfo'
+      description: Response for listing sessions
+    auth.v1.LockoutInfo:
+      type: object
+      properties:
+        retryAfter:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: Duration until account is unlocked
+        failedAttempts:
+          type: integer
+          description: Number of failed attempts
+          format: int32
+        maxAttempts:
+          type: integer
+          description: Maximum attempts before lockout (configurable)
+          format: int32
+        lockedUntil:
+          type: string
+          description: Lockout timestamp
+          format: date-time
+      description: Account lockout information
+    auth.v1.MfaChallenge:
+      type: object
+      properties:
+        challengeToken:
+          type: string
+          description: Token to correlate MFA verification with original auth attempt
+        availableMethods:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.MfaMethodInfo'
+          description: Available MFA methods for this user
+        expiresAt:
+          type: string
+          description: Challenge expiration - typically 5 minutes
+          format: date-time
+      description: MFA challenge - returned when second factor is required
+    auth.v1.MfaMethodInfo:
+      type: object
+      properties:
+        method:
+          enum:
+          - MFA_METHOD_UNSPECIFIED
+          - MFA_METHOD_TOTP
+          - MFA_METHOD_SMS
+          - MFA_METHOD_EMAIL
+          - MFA_METHOD_RECOVERY_CODE
+          type: string
+          format: enum
+        hint:
+          type: string
+          description: Masked hint (e.g., "***-***-1234" for SMS, "john***@gm***.com" for email)
+        isDefault:
+          type: boolean
+          description: True if this is the user's preferred/default method
+      description: Information about an available MFA method
+    auth.v1.MfaMethodStatus:
+      type: object
+      properties:
+        method:
+          enum:
+          - MFA_METHOD_UNSPECIFIED
+          - MFA_METHOD_TOTP
+          - MFA_METHOD_SMS
+          - MFA_METHOD_EMAIL
+          - MFA_METHOD_RECOVERY_CODE
+          type: string
+          format: enum
+        enabled:
+          type: boolean
+        hint:
+          type: string
+          description: Masked hint for this method
+        configuredAt:
+          type: string
+          description: When this method was configured
+          format: date-time
+      description: Status of a configured MFA method
+    auth.v1.MfaSetupError:
+      type: object
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+    auth.v1.MfaSetupSuccess:
+      type: object
+      properties:
+        recoveryCodes:
+          type: array
+          items:
+            type: string
+      description: Recovery codes (only returned on first MFA enrollment, display once!)
+    auth.v1.RecoveryConfirmRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Recovery token from email/SMS
+        newPassword:
+          type: string
+          description: 'New password (NIST: min 8 chars with MFA, min 15 without)'
+      description: Confirm recovery and set new password
+    auth.v1.RecoveryStartRequest:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: Email or phone number (used to look up account)
+        identifierType:
+          enum:
+          - IDENTIFIER_TYPE_UNSPECIFIED
+          - IDENTIFIER_TYPE_EMAIL
+          - IDENTIFIER_TYPE_PHONE
+          type: string
+          description: Identifier type (email or phone)
+          format: enum
+        idempotencyKey:
+          type: string
+          description: "Client-generated idempotency key (UUID v4 recommended).\r\n Prevents duplicate recovery emails on network retries."
+      description: "Start account recovery (password reset)\r\n Always returns success to prevent user enumeration (OWASP)"
+    auth.v1.RefreshTokensRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+    auth.v1.RequestVerificationRequest:
+      type: object
+      properties:
+        type:
+          enum:
+          - VERIFICATION_TYPE_UNSPECIFIED
+          - VERIFICATION_TYPE_EMAIL
+          - VERIFICATION_TYPE_PHONE
+          type: string
+          description: Type of verification
+          format: enum
+    auth.v1.RevokeOtherSessionsRequest:
+      type: object
+      properties: {}
+    auth.v1.RevokeSessionsResponse:
+      type: object
+      properties:
+        revokedCount:
+          type: integer
+          description: Number of sessions revoked
+          format: int32
+      description: Response for revoking multiple sessions
+    auth.v1.SessionInfo:
+      type: object
+      properties:
+        deviceId:
+          type: string
+          description: Unique device identifier
+        deviceName:
+          type: string
+          description: Human-readable device name
+        deviceType:
+          type: string
+          description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+        clientVersion:
+          type: string
+          description: App version
+        ipAddress:
+          type: string
+          description: Last seen IP address (may be masked for privacy)
+        ipCountry:
+          type: string
+          description: ISO 3166-1 alpha-2 country code
+        createdAt:
+          type: string
+          description: Session creation timestamp
+          format: date-time
+        lastSeenAt:
+          type: string
+          description: Last activity timestamp
+          format: date-time
+        expiresAt:
+          type: string
+          description: Session expiration timestamp
+          format: date-time
+        isCurrent:
+          type: boolean
+          description: True if this is the current session
+        ipCreatedBy:
+          type: string
+          description: IP address at session creation
+        activityCount:
+          type: integer
+          description: Number of token refreshes (activity indicator)
+          format: int32
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Session metadata (user agent, fingerprint, etc.)
+      description: Session information returned to clients
+    auth.v1.SetupMfaRequest:
+      type: object
+      properties:
+        method:
+          enum:
+          - MFA_METHOD_UNSPECIFIED
+          - MFA_METHOD_TOTP
+          - MFA_METHOD_SMS
+          - MFA_METHOD_EMAIL
+          - MFA_METHOD_RECOVERY_CODE
+          type: string
+          description: Method to set up
+          format: enum
+        identifier:
+          type: string
+          description: 'For SMS/Email: the phone/email to use (must be verified)'
+      description: Request to set up MFA
+    auth.v1.SetupMfaResponse:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: 'For TOTP: base32-encoded secret'
+        provisioningUri:
+          type: string
+          description: 'For TOTP: otpauth:// URI for QR code generation'
+        maskedDestination:
+          type: string
+          description: 'For SMS/Email: masked destination where code was sent'
+        setupToken:
+          type: string
+          description: Setup token to correlate with `ConfirmMfaSetup`
+        expiresAt:
+          type: string
+          description: Setup expires at
+          format: date-time
+      description: MFA setup response
+    auth.v1.SignOutRequest:
+      type: object
+      properties: {}
+    auth.v1.SignUpRequest:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: User identifier (email or phone in E.164 format)
+        identifierType:
+          enum:
+          - IDENTIFIER_TYPE_UNSPECIFIED
+          - IDENTIFIER_TYPE_EMAIL
+          - IDENTIFIER_TYPE_PHONE
+          type: string
+          description: Type of identifier (auto-detected if not specified based on format)
+          format: enum
+        password:
+          type: string
+          description: Password
+        displayName:
+          type: string
+          description: Display name
+        installationId:
+          allOf:
+          - $ref: '#/components/schemas/core.v1.UUID'
+          description: Unique installation/app instance ID
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client/device information for session (stored in sessions table)
+        locale:
+          type: string
+          description: Locale (BCP 47, e.g., `en-US`)
+        timezone:
+          type: string
+          description: Timezone (IANA, e.g., `America/New_York`)
+        idempotencyKey:
+          type: string
+          description: "Client-generated idempotency key (UUID v4 recommended).\r\n Guarantees at-most-once execution for retries on network failures.\r\n Server ignores the request body if a matching key was already processed\r\n and returns the original response."
+      description: Register a new user account
+    auth.v1.TokenPair:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    auth.v1.UserSnapshot:
+      type: object
+      properties:
+        userId:
+          $ref: '#/components/schemas/core.v1.UUID'
+        displayName:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        role:
+          enum:
+          - USER_ROLE_UNSPECIFIED
+          - USER_ROLE_ADMIN
+          - USER_ROLE_USER
+          - USER_ROLE_GUEST
+          type: string
+          format: enum
+        status:
+          enum:
+          - USER_STATUS_UNSPECIFIED
+          - USER_STATUS_PENDING
+          - USER_STATUS_ACTIVE
+          - USER_STATUS_SUSPENDED
+          - USER_STATUS_DELETED
+          type: string
+          format: enum
+        emailVerified:
+          type: boolean
+        phoneVerified:
+          type: boolean
+        mfaEnabled:
+          type: boolean
+        linkedProviders:
+          type: array
+          items:
+            enum:
+            - OAUTH_PROVIDER_UNSPECIFIED
+            - OAUTH_PROVIDER_GOOGLE
+            - OAUTH_PROVIDER_GITHUB
+            - OAUTH_PROVIDER_MICROSOFT
+            - OAUTH_PROVIDER_APPLE
+            - OAUTH_PROVIDER_FACEBOOK
+            type: string
+            format: enum
+        avatarUrl:
+          type: string
+        hasPassword:
+          type: boolean
+      description: Info returned on successful auth
+    auth.v1.ValidateCredentialsResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        user:
+          $ref: '#/components/schemas/auth.v1.UserSnapshot'
+    auth.v1.VerifyMfaRequest:
+      type: object
+      properties:
+        challengeToken:
+          type: string
+          description: Challenge token from MfaChallenge
+        method:
+          enum:
+          - MFA_METHOD_UNSPECIFIED
+          - MFA_METHOD_TOTP
+          - MFA_METHOD_SMS
+          - MFA_METHOD_EMAIL
+          - MFA_METHOD_RECOVERY_CODE
+          type: string
+          description: Method used for verification
+          format: enum
+        code:
+          type: string
+          description: Verification code (6-digit TOTP, SMS code, recovery code, etc.)
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info for session creation
+      description: Verify MFA code to complete authentication
+    core.v1.UUID:
+      type: object
+      properties:
+        value:
+          type: string
+      description: UUID with format validation
+    google.protobuf.Any:
+      type: object
+      properties:
+        '@type':
+          type: string
+          description: The type of the serialized message.
+      additionalProperties: true
+      description: Contains an arbitrary serialized message along with a @type that describes the type of the serialized message.
+    google.rpc.Status:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: The status code, which should be an enum value of [google.rpc.Code][google.rpc.Code].
+          format: int32
+        message:
+          type: string
+          description: A developer-facing error message, which should be in English. Any user-facing error message should be localized and sent in the [google.rpc.Status.details][google.rpc.Status.details] field, or localized by the client.
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/google.protobuf.Any'
+          description: A list of messages that carry the error details.  There is a common set of message types for APIs to use.
+      description: 'The `Status` type defines a logical error model that is suitable for different programming environments, including REST APIs and RPC APIs. It is used by [gRPC](https://github.com/grpc). Each `Status` message contains three pieces of data: error code, error message, and error details. You can find out more about this error model and how to work with it in the [API Design Guide](https://cloud.google.com/apis/design/errors).'
+    operations.v1.CheckResult:
+      type: object
+      properties:
+        status:
+          enum:
+          - HEALTH_STATUS_UNSPECIFIED
+          - HEALTH_STATUS_HEALTHY
+          - HEALTH_STATUS_UNHEALTHY
+          type: string
+          description: Component health.
+          format: enum
+        message:
+          type: string
+          description: Error detail — present only when status is HEALTH_STATUS_UNHEALTHY.
+      description: Individual dependency check result.
+    operations.v1.HealthChecks:
+      type: object
+      properties:
+        database:
+          allOf:
+          - $ref: '#/components/schemas/operations.v1.CheckResult'
+          description: Database connectivity check.
+        storage:
+          allOf:
+          - $ref: '#/components/schemas/operations.v1.CheckResult'
+          description: "S3 storage connectivity check.\r\n Omitted from JSON when S3 is not configured."
+      description: Component health check results.
+    operations.v1.HealthResponse:
+      type: object
+      properties:
+        status:
+          enum:
+          - HEALTH_STATUS_UNSPECIFIED
+          - HEALTH_STATUS_HEALTHY
+          - HEALTH_STATUS_UNHEALTHY
+          type: string
+          description: Overall service health.
+          format: enum
+        version:
+          type: string
+          description: Service version from Cargo.toml (e.g. "0.1.0").
+        checks:
+          allOf:
+          - $ref: '#/components/schemas/operations.v1.HealthChecks'
+          description: Dependency health checks.
+      description: Readiness check response with component health.
+    operations.v1.LivenessCheckResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Always "OK" when the process is alive.
+      description: Liveness check response.
+    operations.v1.MetricsResponse:
+      type: object
+      properties:
+        metrics:
+          type: string
+          description: Prometheus-formatted metrics text.
+      description: "Metrics response.\r\n\r\n Body is Prometheus text exposition format, served as text/plain."
+    operations.v1.VerifyEmailResponse:
+      type: object
+      properties:
+        redirectUrl:
+          type: string
+          description: Redirect URL (success or error page).
+      description: "Email verification response.\r\n\r\n The actual HTTP response is a 302 redirect to the frontend\r\n success or error page — this message documents the redirect target."
+    users.v1.ConfirmAvatarUploadRequest:
+      type: object
+      properties:
+        userId:
+          $ref: '#/components/schemas/core.v1.UUID'
+      description: Confirm avatar upload completed
+    users.v1.CreateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Display name
+        email:
+          type: string
+          description: Email (optional if phone is provided)
+        phone:
+          type: string
+          description: Phone in E.164 format (optional if email is provided)
+        password:
+          type: string
+          description: Password (optional for OAuth-only accounts)
+        role:
+          enum:
+          - USER_ROLE_UNSPECIFIED
+          - USER_ROLE_ADMIN
+          - USER_ROLE_USER
+          - USER_ROLE_GUEST
+          type: string
+          description: User role
+          format: enum
+        locale:
+          type: string
+          description: Locale (BCP 47)
+        timezone:
+          type: string
+          description: Timezone (IANA)
+    users.v1.GetAvatarUploadUrlRequest:
+      type: object
+      properties:
+        userId:
+          $ref: '#/components/schemas/core.v1.UUID'
+        contentType:
+          type: string
+        contentSize:
+          type: string
+      description: Request for presigned upload URL
+    users.v1.GetAvatarUploadUrlResponse:
+      type: object
+      properties:
+        uploadUrl:
+          type: string
+          description: Presigned PUT URL for S3
+        expiresIn:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: URL expiration in seconds
+      description: Response with presigned URL for direct S3 upload
+    users.v1.SetPasswordRequest:
+      type: object
+      properties:
+        userId:
+          $ref: '#/components/schemas/core.v1.UUID'
+        password:
+          type: string
+    users.v1.UpdateUserRequest:
+      type: object
+      properties:
+        userId:
+          $ref: '#/components/schemas/core.v1.UUID'
+        updateMask:
+          type: string
+          format: field-mask
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        role:
+          enum:
+          - USER_ROLE_UNSPECIFIED
+          - USER_ROLE_ADMIN
+          - USER_ROLE_USER
+          - USER_ROLE_GUEST
+          type: string
+          format: enum
+        status:
+          enum:
+          - USER_STATUS_UNSPECIFIED
+          - USER_STATUS_PENDING
+          - USER_STATUS_ACTIVE
+          - USER_STATUS_SUSPENDED
+          - USER_STATUS_DELETED
+          type: string
+          format: enum
+        locale:
+          type: string
+        timezone:
+          type: string
+    users.v1.User:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/core.v1.UUID'
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        role:
+          enum:
+          - USER_ROLE_UNSPECIFIED
+          - USER_ROLE_ADMIN
+          - USER_ROLE_USER
+          - USER_ROLE_GUEST
+          type: string
+          format: enum
+        status:
+          enum:
+          - USER_STATUS_UNSPECIFIED
+          - USER_STATUS_PENDING
+          - USER_STATUS_ACTIVE
+          - USER_STATUS_SUSPENDED
+          - USER_STATUS_DELETED
+          type: string
+          format: enum
+        emailVerified:
+          type: boolean
+        phoneVerified:
+          type: boolean
+        mfaEnabled:
+          type: boolean
+        hasPassword:
+          type: boolean
+        avatarUrl:
+          type: string
+          description: "Linked OAuth providers\r\n repeated OAuthProvider linked_providers = 11;"
+        locale:
+          type: string
+        timezone:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    users.v1.UserInfo:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/core.v1.UUID'
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        role:
+          enum:
+          - USER_ROLE_UNSPECIFIED
+          - USER_ROLE_ADMIN
+          - USER_ROLE_USER
+          - USER_ROLE_GUEST
+          type: string
+          format: enum
+        status:
+          enum:
+          - USER_STATUS_UNSPECIFIED
+          - USER_STATUS_PENDING
+          - USER_STATUS_ACTIVE
+          - USER_STATUS_SUSPENDED
+          - USER_STATUS_DELETED
+          type: string
+          format: enum
+        avatarUrl:
+          type: string
+        locale:
+          type: string
+        timezone:
+          type: string
+tags:
+- name: AuthService
+  description: "=============================================================================\r\n Auth Service - Authentication, MFA, OAuth, Sessions\r\n =============================================================================\r\n\r\n OWASP Authentication Cheat Sheet compliance:\r\n - Multi-identifier (email, phone)\r\n - MFA support (blocks 99.9% of automated attacks)\r\n - OAuth 2.0 with PKCE\r\n - Account lockout (brute-force protection)\r\n - Generic error messages (prevent enumeration)\r\n - Password change requires current password\r\n\r\n Core flows:\r\n   Registration: SignUp → (optional) ConfirmVerification → Active account\r\n   Login:        Authenticate → (if MFA) VerifyMfa → Tokens issued\r\n   Password:     ChangePassword (has password) | RecoveryStart/Confirm\r\n   (forgot/none)\r\n\r\n Expansion points:\r\n - Passkeys/WebAuthn: Add MFA_METHOD_PASSKEY\r\n - Magic links: Add RequestMagicLink, VerifyMagicLink\r\n - Trusted devices: TrustDevice, Skip MFA on known devices\r\n - Audit logging: Add audit metadata fields\r\n - Rate limiting hints: Return retry-after in responses\r\n ============================================================================="
+- name: OperationsService
+  description: "=============================================================================\r\n Operations Service — REST-only contract for OpenAPI generation\r\n =============================================================================\r\n\r\n ⚠️  NOT a callable gRPC service. This proto exists solely to produce a\r\n unified OpenAPI 3.1 spec alongside auth and user services.\r\n\r\n These endpoints (health probes, email verification, metrics) are\r\n infrastructure-level concerns implemented directly in Axum (see\r\n src/routes.rs). Defining them in proto keeps the REST API contract\r\n in the same source-of-truth as the gRPC API.\r\n\r\n gRPC reflection intentionally excludes this service.\r\n ============================================================================="
+- name: UserService
+  description: User Service - User CRUD, avatars, admin functions

@@ -1,0 +1,19 @@
+version: v2
+plugins:
+  # Generate OpenAPI spec from proto files with google.api.http annotations.
+  # Post-processed to OpenAPI 3.1 by `cargo xtask openapi`.
+  #
+  # NOTE: version is synced from Cargo.toml by xtask before `buf generate`.
+  - remote: buf.build/community/google-gnostic-openapi:v0.7.1
+    out: api/openapi/v1
+    opt:
+      - version=0.1.0
+      - title=Auth Service API
+      - description=Authentication and user management gRPC/REST API
+      - naming=json
+      - fq_schema_naming=true
+      - enum_type=string
+      - default_response=true
+      - output_mode=merge
+inputs:
+  - directory: api/proto

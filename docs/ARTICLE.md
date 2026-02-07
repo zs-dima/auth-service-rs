@@ -1105,17 +1105,6 @@ service AuthService {
 }
 ```
 
-**Current status**: Endpoints return `Status::unimplemented` — infrastructure ready, implementation pending:
-
-```rust
-pub async fn get_oauth_url(
-    &self,
-    _request: Request<GetOAuthUrlRequest>,
-) -> Result<Response<GetOAuthUrlResponse>, Status> {
-    Err(Status::unimplemented("OAuth not yet implemented"))
-}
-```
-
 **Why this architecture matters:**
 
 1. **Schema Stability** — Database supports OAuth from day one (no migration needed later)
@@ -1293,7 +1282,7 @@ pub struct SessionInfo {
 rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
 ```
 
-Users can view all active devices with their location and last activity.
+Users can view all active devices, including their locations and last activities.
 
 **2. Revoke Specific Sessions**
 ```rust

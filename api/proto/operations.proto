@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package operations.v1;
+option go_package = "auth-service/proto/operations/v1;operationsv1";
+
+import "google/api/annotations.proto";
+
+// =============================================================================
+// Operations Service — REST-only contract for OpenAPI generation
+// =============================================================================
+//
+// ⚠️  NOT a callable gRPC service. This proto exists solely to produce a
+// unified OpenAPI 3.1 spec alongside auth and user services.
+//
+// These endpoints (health probes, email verification, metrics) are
+// infrastructure-level concerns implemented directly in Axum (see
+// src/routes.rs). Defining them in proto keeps the REST API contract
+// in the same source-of-truth as the gRPC API.
+//
+// gRPC reflection intentionally excludes this service.
+// =============================================================================
+service OperationsService {
+  // Kubernetes readiness probe with dependency health checks.
+  //
+  // Returns JSON with database and S3 storage connectivity status.
+  rpc ReadinessCheck(ReadinessCheckRequest) returns (HealthResponse) {
+    option (google.api.http) = {
+      get: "/health/ready"
+    };
+  }
+
+  // Kubernetes liveness probe.
+  //
+  // Returns plain text "OK" when the process is alive.
+  rpc LivenessCheck(LivenessCheckRequest) returns (LivenessCheckResponse) {
+    option (google.api.http) = {
+      get: "/health/live"
+    };
+  }
+
+  // Handle email verification link clicks.
+  //
+  // Flow: Email link → GET /v1/verify-email?token=xxx → 302 redirect →
+  // Frontend. The actual HTTP response is a 302 redirect, not the message body.
+  rpc VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse) {
+    option (google.api.http) = {
+      get: "/v1/verify-email"
+    };
+  }
+
+  // Prometheus metrics endpoint.
+  //
+  // Returns Prometheus text exposition format when metrics collection is
+  // enabled. Content-Type: text/plain; version=0.0.4; charset=utf-8
+  rpc Metrics(MetricsRequest) returns (MetricsResponse) {
+    option (google.api.http) = {
+      get: "/metrics"
+    };
+  }
+}
+
+// =============================================================================
+// Health
+// =============================================================================
+
+// Component health status.
+//
+// Serialized as lowercase string in JSON: "healthy", "unhealthy".
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY     = 1;
+  HEALTH_STATUS_UNHEALTHY   = 2;
+}
+
+message ReadinessCheckRequest {}
+
+// Readiness check response with component health.
+message HealthResponse {
+  // Overall service health.
+  HealthStatus status = 1;
+
+  // Service version from Cargo.toml (e.g. "0.1.0").
+  string version = 2;
+
+  // Dependency health checks.
+  HealthChecks checks = 3;
+}
+
+// Component health check results.
+message HealthChecks {
+  // Database connectivity check.
+  CheckResult database = 1;
+
+  // S3 storage connectivity check.
+  // Omitted from JSON when S3 is not configured.
+  optional CheckResult storage = 2;
+}
+
+// Individual dependency check result.
+message CheckResult {
+  // Component health.
+  HealthStatus status = 1;
+
+  // Error detail — present only when status is HEALTH_STATUS_UNHEALTHY.
+  optional string message = 2;
+}
+
+message LivenessCheckRequest {}
+
+// Liveness check response.
+message LivenessCheckResponse {
+  // Always "OK" when the process is alive.
+  string status = 1;
+}
+
+// =============================================================================
+// Email Verification
+// =============================================================================
+
+message VerifyEmailRequest {
+  // Verification token from the email link (URL-encoded).
+  string token = 1;
+}
+
+// Email verification response.
+//
+// The actual HTTP response is a 302 redirect to the frontend
+// success or error page — this message documents the redirect target.
+message VerifyEmailResponse {
+  // Redirect URL (success or error page).
+  string redirect_url = 1;
+}
+
+// =============================================================================
+// Metrics
+// =============================================================================
+
+message MetricsRequest {}
+
+// Metrics response.
+//
+// Body is Prometheus text exposition format, served as text/plain.
+message MetricsResponse {
+  // Prometheus-formatted metrics text.
+  string metrics = 1;
+}

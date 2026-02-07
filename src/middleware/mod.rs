@@ -9,17 +9,22 @@
 //! - Request flows: outermost → innermost → handler
 //! - Response flows: handler → innermost → outermost
 //!
-//! Recommended order (applied in reverse):
+//! Unified middleware stack (applied in reverse via `ServiceBuilder`):
 //! 1. `RequestIdLayer` - Extract/generate request ID first
-//! 2. `TraceLayer` - Request tracing with spans
-//! 3. `TimeoutLayer` - Request timeout
+//! 2. `MetricsLayer` - Record request count and duration
+//! 3. `TraceLayer` - Request tracing with spans
 //! 4. `CorsLayer` - CORS handling
 //! 5. `AuthLayer` - JWT authentication (skips public routes)
+//!
+//! REST-only (applied to REST router before merge):
+//! - `TimeoutLayer` - Request timeout (gRPC uses `grpc-timeout` header instead)
 
 pub mod auth;
 pub mod client_ip;
+pub mod metrics;
 pub mod request_id;
 
 pub use auth::AuthLayer;
 pub use client_ip::ClientIp;
+pub use metrics::MetricsLayer;
 pub use request_id::RequestIdLayer;

@@ -18,7 +18,8 @@
 //!
 //! | Endpoint | Method | Description |
 //! |----------|--------|-------------|
-//! | `/verify-email?token=xxx` | GET | Email verification link handler (302 redirect) |
+//! | `/v1/verify-email?token=xxx` | GET | Email verification link handler (302 redirect) |
+//! | `/verify-email?token=xxx` | GET | **Deprecated** — backward compat, use `/v1/` path |
 //!
 //! ## Metrics (optional)
 //!
@@ -43,64 +44,28 @@
 //!
 //! # Email Verification Flow
 //!
-//! 1. User clicks verification link in email: `https://domain/verify-email?token=xxx`
+//! 1. User clicks verification link in email: `https://domain/v1/verify-email?token=xxx`
 //! 2. Backend validates token and marks email as verified
 //! 3. User is redirected to frontend success/error page
 
 use auth_core::TokenGenerator;
+use auth_proto::operations::{CheckResult, HealthChecks, HealthResponse, HealthStatus};
 use axum::{
     Json, Router,
     extract::{Query, State},
     response::Redirect,
     routing::get,
 };
-use serde::{Deserialize, Serialize};
+use http::StatusCode;
+use serde::Deserialize;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{info, warn};
 
 use crate::core::error_codes;
 use crate::startup::AppState;
 
-/// Health check response.
-#[derive(Serialize)]
-pub struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    checks: Option<HealthChecks>,
-}
-
-#[derive(Serialize)]
-pub struct HealthChecks {
-    database: CheckResult,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    storage: Option<CheckResult>,
-}
-
-#[derive(Serialize)]
-pub struct CheckResult {
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
-impl CheckResult {
-    const fn healthy() -> Self {
-        Self {
-            status: "healthy",
-            message: None,
-        }
-    }
-
-    fn unhealthy(message: &str) -> Self {
-        Self {
-            status: "unhealthy",
-            message: Some(message.to_string()),
-        }
-    }
-}
-
 /// Build version.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Query parameters for email verification.
 #[derive(Debug, Deserialize)]
@@ -110,17 +75,34 @@ pub struct VerifyEmailQuery {
 }
 
 /// Build REST routes with the given application state.
+///
+/// Infrastructure endpoints (health, metrics) live at the root.
+/// API endpoints are nested under `/v1` for forward-compatible versioning.
 pub fn rest_routes(state: AppState) -> Router {
+    let v1 = Router::new().route("/verify-email", get(verify_email_handler));
+
     Router::new()
         .route("/", get(|| async { "auth-service" }))
         .route("/health", get(|| async { "OK" }))
         .route("/health/live", get(|| async { "OK" }))
         .route("/health/ready", get(readiness_handler))
-        .route("/verify-email", get(verify_email_handler))
         .route("/metrics", get(metrics_handler))
+        // Versioned API routes
+        .nest("/v1", v1)
+        // Keep root-level verify-email for backward compatibility with
+        // existing email links already sent to users.
+        // Deprecated: clients should use /v1/verify-email going forward.
+        .route(
+            "/verify-email",
+            get(verify_email_handler).layer(deprecated_layer()),
+        )
         .with_state(state)
 }
 
+/// Prometheus metrics endpoint.
+///
+/// Returns Prometheus-formatted metrics when metrics collection is enabled.
+/// Returns an empty string when metrics are disabled.
 async fn metrics_handler(State(state): State<AppState>) -> String {
     state
         .metrics
@@ -129,33 +111,69 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
         .unwrap_or_default()
 }
 
-async fn readiness_handler(State(state): State<AppState>) -> Json<HealthResponse> {
-    let db_check = if state.db.health_check().await {
-        CheckResult::healthy()
+/// Kubernetes readiness probe with dependency health checks.
+///
+/// Returns HTTP 200 with JSON body when all dependencies are healthy,
+/// or HTTP 503 (Service Unavailable) when any dependency is unhealthy.
+/// Kubernetes uses the status code to determine pod readiness.
+async fn readiness_handler(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<HealthResponse>) {
+    let db_check = if state.ctx.db().health_check().await {
+        CheckResult {
+            status: HealthStatus::Healthy.into(),
+            message: None,
+        }
     } else {
-        CheckResult::unhealthy("Database connection failed")
+        CheckResult {
+            status: HealthStatus::Unhealthy.into(),
+            message: Some("Database connection failed".to_string()),
+        }
     };
 
-    let storage_check = match &state.s3 {
+    let storage_check = match state.ctx.s3() {
         Some(s3) => Some(if s3.health_check().await {
-            CheckResult::healthy()
+            CheckResult {
+                status: HealthStatus::Healthy.into(),
+                message: None,
+            }
         } else {
-            CheckResult::unhealthy("S3 connection failed")
+            CheckResult {
+                status: HealthStatus::Unhealthy.into(),
+                message: Some("S3 connection failed".to_string()),
+            }
         }),
         None => None,
     };
 
-    let healthy = db_check.status == "healthy"
-        && storage_check.as_ref().is_none_or(|s| s.status == "healthy");
+    let all_healthy = HealthStatus::try_from(db_check.status) == Ok(HealthStatus::Healthy)
+        && storage_check
+            .as_ref()
+            .is_none_or(|s| HealthStatus::try_from(s.status) == Ok(HealthStatus::Healthy));
 
-    Json(HealthResponse {
-        status: if healthy { "healthy" } else { "unhealthy" },
-        version: VERSION,
-        checks: Some(HealthChecks {
-            database: db_check,
-            storage: storage_check,
+    let overall = if all_healthy {
+        HealthStatus::Healthy
+    } else {
+        HealthStatus::Unhealthy
+    };
+
+    let http_status = if all_healthy {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        http_status,
+        Json(HealthResponse {
+            status: overall.into(),
+            version: VERSION.to_string(),
+            checks: Some(HealthChecks {
+                database: Some(db_check),
+                storage: storage_check,
+            }),
         }),
-    })
+    )
 }
 
 /// Handle email verification link clicks.
@@ -171,7 +189,7 @@ async fn verify_email_handler(
     State(state): State<AppState>,
     Query(query): Query<VerifyEmailQuery>,
 ) -> Redirect {
-    let urls = &state.urls;
+    let urls = state.ctx.urls();
 
     // Decode the URL-encoded token
     let token = match urlencoding::decode(&query.token) {
@@ -186,7 +204,13 @@ async fn verify_email_handler(
     let token_hash = TokenGenerator::hash_token(&token);
 
     // Atomic: validate → check status → consume → verify → activate
-    match state.db.email_verifications.verify_email(&token_hash).await {
+    match state
+        .ctx
+        .db()
+        .email_verifications
+        .verify_email(&token_hash)
+        .await
+    {
         Ok(user) => {
             info!(user_id = %user.id, "Email verified successfully");
             Redirect::to(&urls.email_verified_success())
@@ -200,4 +224,16 @@ async fn verify_email_handler(
             Redirect::to(&urls.email_verified_error(error_code))
         }
     }
+}
+
+/// Create a layer that adds the RFC 8594 `Deprecation` response header
+/// to signal that an endpoint is deprecated and clients should migrate.
+///
+/// When a removal date is determined, add a `Sunset` header alongside
+/// this with the retirement timestamp (RFC 7231 date format).
+fn deprecated_layer() -> SetResponseHeaderLayer<http::HeaderValue> {
+    SetResponseHeaderLayer::if_not_present(
+        http::HeaderName::from_static("deprecation"),
+        http::HeaderValue::from_static("true"),
+    )
 }

@@ -39,6 +39,7 @@ static PUBLIC_ROUTES: phf::Set<&'static str> = phf_set! {
     "/ready",
     "/metrics",
     "/verify-email",
+    "/v1/verify-email",
     "/",
 };
 
@@ -150,6 +151,13 @@ fn is_public_route(path: &str) -> bool {
         return true;
     }
 
+    // Swagger UI and OpenAPI spec are only served when the feature is enabled.
+    // Prefix match is required because Swagger UI serves assets at sub-paths.
+    #[cfg(feature = "swagger")]
+    if path.starts_with("/swagger-ui") || path.starts_with("/api-docs/") {
+        return true;
+    }
+
     // Extract gRPC method name (last segment after /)
     path.rsplit('/')
         .next()
@@ -191,18 +199,39 @@ mod tests {
 
     #[test]
     fn public_routes_identified_correctly() {
-        assert!(is_public_route("/auth.AuthService/Authenticate"));
-        assert!(is_public_route("/auth.AuthService/SignUp"));
-        assert!(is_public_route("/auth.AuthService/RecoveryStart"));
-        assert!(is_public_route("/auth.AuthService/ConfirmVerification"));
+        // Versioned gRPC paths (auth.v1 package)
+        assert!(is_public_route("/auth.v1.AuthService/Authenticate"));
+        assert!(is_public_route("/auth.v1.AuthService/SignUp"));
+        assert!(is_public_route("/auth.v1.AuthService/RecoveryStart"));
+        assert!(is_public_route("/auth.v1.AuthService/RecoveryConfirm"));
+        assert!(is_public_route("/auth.v1.AuthService/RefreshTokens"));
+        assert!(is_public_route("/auth.v1.AuthService/ConfirmVerification"));
+        assert!(is_public_route("/auth.v1.AuthService/GetOAuthUrl"));
+        assert!(is_public_route("/auth.v1.AuthService/ExchangeOAuthCode"));
         assert!(is_public_route("/grpc.health.v1.Health/Check"));
+        assert!(is_public_route("/grpc.health.v1.Health/Watch"));
+        // REST endpoints
         assert!(is_public_route("/health"));
+        assert!(is_public_route("/health/live"));
         assert!(is_public_route("/health/ready"));
         assert!(is_public_route("/verify-email"));
+        assert!(is_public_route("/v1/verify-email"));
+        assert!(is_public_route("/metrics"));
         assert!(is_public_route("/"));
-        assert!(!is_public_route("/auth.AuthService/CreateUser"));
-        assert!(!is_public_route("/auth.AuthService/SetPassword"));
+        // Protected routes
+        assert!(!is_public_route("/auth.v1.AuthService/ChangePassword"));
+        assert!(!is_public_route("/auth.v1.AuthService/SignOut"));
+        assert!(!is_public_route("/users.v1.UserService/GetUser"));
         assert!(!is_public_route("/api/users"));
+    }
+
+    #[cfg(feature = "swagger")]
+    #[test]
+    fn swagger_routes_are_public() {
+        assert!(is_public_route("/swagger-ui"));
+        assert!(is_public_route("/swagger-ui/index.html"));
+        assert!(is_public_route("/swagger-ui/swagger-ui.css"));
+        assert!(is_public_route("/api-docs/openapi.json"));
     }
 
     #[test]

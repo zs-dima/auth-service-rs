@@ -1,9 +1,25 @@
 version: v2
+modules:
+  - path: api/proto
+    excludes:
+      - api/proto/google
+      - api/proto/validate
 deps:
   - buf.build/envoyproxy/protoc-gen-validate
+  - buf.build/googleapis/googleapis
 lint:
   use:
     - STANDARD
+  except:
+    # Allow flat directory structure with multiple packages
+    - DIRECTORY_SAME_PACKAGE
+    - PACKAGE_DIRECTORY_MATCH
+    # Allow shared request/response types
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    # OAUTH prefix is clearer than O_AUTH
+    - ENUM_VALUE_PREFIX
 breaking:
   use:
     - FILE
