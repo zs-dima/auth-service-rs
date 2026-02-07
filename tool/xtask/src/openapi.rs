@@ -138,6 +138,10 @@ fn inject_version(root: &Path, version: &str) -> anyhow::Result<()> {
 /// - Convert `nullable: true` → type arrays (JSON Schema 2020-12)
 /// - Remove `nullable: false` no-ops
 /// - Annotate SSE streaming endpoints
+/// - Fix redirect endpoints (302)
+/// - Rewrite `HealthStatus` enum values to match runtime wire format
+/// - Mark unimplemented operations (OAuth, MFA)
+/// - Add `securitySchemes` and per-operation `security`
 fn patch_spec(path: &Path) -> anyhow::Result<()> {
     let content =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
@@ -156,6 +160,15 @@ fn patch_spec(path: &Path) -> anyhow::Result<()> {
 
     // Fix redirect endpoints: gnostic maps all RPCs to 200, but /verify-email is 302
     patch_redirect_endpoints(&mut doc);
+
+    // Rewrite HealthStatus enum values to match runtime serde wire format
+    patch_health_status_enums(&mut doc);
+
+    // Mark unimplemented operations with availability metadata
+    mark_unimplemented_operations(&mut doc);
+
+    // Add security schemes and per-operation security requirements
+    add_security_schemes(&mut doc);
 
     let output = serde_yaml_ng::to_string(&doc).context("Failed to serialize OpenAPI YAML")?;
 
@@ -214,12 +227,18 @@ fn convert_nullable(value: &mut Value) {
 }
 
 /// Add `x-streaming: sse` and `x-content-type: text/event-stream` to
-/// operations whose response schema reference contains "stream" (case-insensitive).
+/// operations whose response schema reference contains "stream" (case-insensitive),
+/// or that match known streaming endpoints.
 ///
 /// gnostic wraps server-streaming RPC responses in schemas named like
 /// `Stream_<Package>_<Message>`, so we detect those automatically — no
-/// hardcoded path list needed.
+/// hardcoded path list needed. As a fallback, known streaming paths are
+/// annotated directly when gnostic does not wrap the schema.
 fn annotate_sse(doc: &mut Value) {
+    /// Known streaming endpoint paths (gnostic sometimes unwraps the
+    /// `Stream_*` wrapper, so schema-based detection misses them).
+    const STREAMING_PATHS: &[&str] = &["/v1/users", "/v1/users/info"];
+
     let paths_key = Value::String("paths".to_string());
 
     let Some(paths) = doc
@@ -230,10 +249,13 @@ fn annotate_sse(doc: &mut Value) {
         return;
     };
 
-    for (_path_key, path_item) in paths.iter_mut() {
+    for (path_key, path_item) in paths.iter_mut() {
         let Some(path_map) = path_item.as_mapping_mut() else {
             continue;
         };
+
+        let path_str = path_key.as_str().unwrap_or_default();
+        let is_known_streaming = STREAMING_PATHS.contains(&path_str);
 
         // Check all HTTP methods (GET, POST, etc.)
         for (_method, operation) in path_map.iter_mut() {
@@ -241,7 +263,7 @@ fn annotate_sse(doc: &mut Value) {
                 continue;
             };
 
-            if !is_streaming_operation(op_map) {
+            if !is_known_streaming && !is_streaming_operation(op_map) {
                 continue;
             }
 
@@ -336,28 +358,30 @@ fn patch_redirect_endpoints(doc: &mut Value) {
         return;
     };
 
-    let Some(operation) = paths
-        .get_mut("/verify-email")
-        .and_then(Value::as_mapping_mut)
-        .and_then(|p| p.get_mut("get"))
-        .and_then(Value::as_mapping_mut)
-    else {
-        return;
-    };
+    // Both the canonical and deprecated paths return 302 redirects
+    for path in ["/v1/verify-email", "/verify-email"] {
+        let Some(operation) = paths
+            .get_mut(path)
+            .and_then(Value::as_mapping_mut)
+            .and_then(|p| p.get_mut("get"))
+            .and_then(Value::as_mapping_mut)
+        else {
+            continue;
+        };
 
-    let Some(responses) = operation
-        .get_mut("responses")
-        .and_then(Value::as_mapping_mut)
-    else {
-        return;
-    };
+        let Some(responses) = operation
+            .get_mut("responses")
+            .and_then(Value::as_mapping_mut)
+        else {
+            continue;
+        };
 
-    // Remove the auto-generated 200 response
-    responses.remove("200");
+        // Remove the auto-generated 200 response
+        responses.remove("200");
 
-    // Build 302 response with Location header
-    let redirect: Value = serde_yaml_ng::from_str(
-        r"
+        // Build 302 response with Location header
+        let redirect: Value = serde_yaml_ng::from_str(
+            r"
 description: Redirect to frontend success or error page.
 headers:
   Location:
@@ -367,10 +391,220 @@ headers:
       type: string
       format: uri
 ",
-    )
-    .expect("static YAML must parse");
+        )
+        .expect("static YAML must parse");
 
-    responses.insert(Value::String("302".to_string()), redirect);
+        responses.insert(Value::String("302".to_string()), redirect);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Health enum, unimplemented markers, security schemes
+// ---------------------------------------------------------------------------
+
+/// Rewrite `HealthStatus` enum values to match the runtime serde wire format.
+///
+/// The `define_enum_serde!(health_status, HealthStatus, "HEALTH_STATUS_")` macro
+/// strips the prefix and lowercases, producing `"healthy"` / `"unhealthy"` on the
+/// wire. But gnostic generates the proto enum names (`HEALTH_STATUS_HEALTHY`).
+/// This patch rewrites enum arrays in schemas that use `HealthStatus` to match runtime.
+fn patch_health_status_enums(doc: &mut Value) {
+    let Some(schemas) = doc
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut("components"))
+        .and_then(Value::as_mapping_mut)
+        .and_then(|m| m.get_mut("schemas"))
+        .and_then(Value::as_mapping_mut)
+    else {
+        return;
+    };
+
+    // Rewrite HealthStatus enums in HealthResponse.status, CheckResult.status
+    for schema_name in ["operations.v1.HealthResponse", "operations.v1.CheckResult"] {
+        let Some(props) = schemas
+            .get_mut(schema_name)
+            .and_then(Value::as_mapping_mut)
+            .and_then(|s| s.get_mut("properties"))
+            .and_then(Value::as_mapping_mut)
+        else {
+            continue;
+        };
+
+        let Some(status) = props.get_mut("status").and_then(Value::as_mapping_mut) else {
+            continue;
+        };
+
+        if let Some(enum_vals) = status.get_mut("enum").and_then(Value::as_sequence_mut) {
+            *enum_vals = vec![
+                Value::String("unspecified".to_string()),
+                Value::String("healthy".to_string()),
+                Value::String("unhealthy".to_string()),
+            ];
+        }
+    }
+}
+
+/// Mark operations that currently return `UNIMPLEMENTED` with availability metadata.
+///
+/// Adds `deprecated: true` and `x-not-implemented: true` so clients know these
+/// endpoints exist in the contract but are not yet functional. Prepends a notice
+/// to the operation description.
+fn mark_unimplemented_operations(doc: &mut Value) {
+    /// Operation IDs of endpoints that return `Status::unimplemented(...)` at runtime.
+    const UNIMPLEMENTED_OPS: &[&str] = &[
+        // OAuth
+        "AuthService_GetOAuthUrl",
+        "AuthService_ExchangeOAuthCode",
+        "AuthService_LinkOAuthProvider",
+        "AuthService_UnlinkOAuthProvider",
+        "AuthService_ListLinkedProviders",
+        // MFA
+        "AuthService_VerifyMfa",
+        "AuthService_GetMfaStatus",
+        "AuthService_SetupMfa",
+        "AuthService_ConfirmMfaSetup",
+        "AuthService_DisableMfa",
+    ];
+
+    let Some(paths) = doc
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut("paths"))
+        .and_then(Value::as_mapping_mut)
+    else {
+        return;
+    };
+
+    for (_path_key, path_item) in paths.iter_mut() {
+        let Some(path_map) = path_item.as_mapping_mut() else {
+            continue;
+        };
+
+        for (_method, operation) in path_map.iter_mut() {
+            let Some(op_map) = operation.as_mapping_mut() else {
+                continue;
+            };
+
+            let op_id = op_map
+                .get(Value::String("operationId".to_string()))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            if !UNIMPLEMENTED_OPS.contains(&op_id) {
+                continue;
+            }
+
+            op_map.insert(Value::String("deprecated".to_string()), Value::Bool(true));
+            op_map.insert(
+                Value::String("x-not-implemented".to_string()),
+                Value::Bool(true),
+            );
+
+            let desc_key = Value::String("description".to_string());
+            let existing = op_map
+                .get(&desc_key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+
+            if !existing.starts_with("⚠️") {
+                op_map.insert(
+                    desc_key,
+                    Value::String(format!(
+                        "⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.\n\n{existing}"
+                    )),
+                );
+            }
+        }
+    }
+}
+
+/// Add `securitySchemes` and per-operation `security` requirements.
+///
+/// The auth service uses Bearer JWT tokens. Public endpoints (signup, authenticate,
+/// recovery, health, verify-email) require no auth; everything else requires a
+/// valid access token.
+fn add_security_schemes(doc: &mut Value) {
+    /// Operation IDs that do not require authentication.
+    const PUBLIC_OPS: &[&str] = &[
+        "AuthService_Authenticate",
+        "AuthService_SignUp",
+        "AuthService_RefreshTokens",
+        "AuthService_RecoveryStart",
+        "AuthService_RecoveryConfirm",
+        "AuthService_ConfirmVerification",
+        "AuthService_VerifyMfa",
+        "OperationsService_ReadinessCheck",
+        "OperationsService_LivenessCheck",
+        "OperationsService_VerifyEmail",
+        "OperationsService_Metrics",
+    ];
+
+    // Add securitySchemes to components
+    let components = doc
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut("components"))
+        .and_then(Value::as_mapping_mut);
+
+    if let Some(components) = components {
+        let scheme: Value = serde_yaml_ng::from_str(
+            r"
+bearerAuth:
+  type: http
+  scheme: bearer
+  bearerFormat: JWT
+  description: Access token from Authenticate or RefreshTokens
+",
+        )
+        .expect("static YAML must parse");
+
+        components.insert(Value::String("securitySchemes".to_string()), scheme);
+    }
+
+    // Set default security at the top level (all ops require bearer)
+    if let Some(root) = doc.as_mapping_mut() {
+        let security: Value = serde_yaml_ng::from_str(
+            r"
+- bearerAuth: []
+",
+        )
+        .expect("static YAML must parse");
+
+        root.insert(Value::String("security".to_string()), security);
+    }
+
+    // Override public operations with empty security (no auth required)
+    let Some(paths) = doc
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut("paths"))
+        .and_then(Value::as_mapping_mut)
+    else {
+        return;
+    };
+
+    for (_path_key, path_item) in paths.iter_mut() {
+        let Some(path_map) = path_item.as_mapping_mut() else {
+            continue;
+        };
+
+        for (_method, operation) in path_map.iter_mut() {
+            let Some(op_map) = operation.as_mapping_mut() else {
+                continue;
+            };
+
+            let op_id = op_map
+                .get(Value::String("operationId".to_string()))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            if PUBLIC_OPS.contains(&op_id) {
+                // Empty array = no security required
+                op_map.insert(
+                    Value::String("security".to_string()),
+                    Value::Sequence(vec![]),
+                );
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

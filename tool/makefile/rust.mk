@@ -41,5 +41,5 @@ doc:
 	cargo doc --open
 
 # All checks before commit
-pre-commit: fmt-check lint test
+pre-commit: fmt-check lint test openapi-check
 	@echo "All checks passed!"

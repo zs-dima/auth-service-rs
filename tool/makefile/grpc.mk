@@ -1,4 +1,4 @@
-.PHONY: proto openapi openapi-lint proto-breaking proto-sync
+.PHONY: proto openapi openapi-lint openapi-check proto-breaking proto-sync
 
 # Generate Rust code from proto files (via build.rs in auth-proto crate)
 proto:
@@ -36,3 +36,8 @@ proto-sync:
 # Requires: buf CLI (https://buf.build/docs/installation)
 openapi:
 	cargo xtask openapi
+
+# Verify the committed spec matches what generation produces.
+# Runs openapi-lint + checks for drift. Use in CI or pre-commit.
+openapi-check: openapi-lint openapi
+	@git diff --exit-code api/openapi/v1/openapi.yaml || (echo "ERROR: openapi.yaml is out of date — run 'make openapi' and commit" && exit 1)

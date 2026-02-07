@@ -23,6 +23,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /health/ready:
     get:
       tags:
@@ -42,6 +43,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /metrics:
     get:
       tags:
@@ -61,6 +63,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/authenticate:
     post:
       tags:
@@ -86,6 +89,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/credentials:
     get:
       tags:
@@ -109,7 +113,10 @@ paths:
     post:
       tags:
       - AuthService
-      description: Disable MFA (requires password verification)
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Disable MFA (requires password verification)
       operationId: AuthService_DisableMfa
       requestBody:
         content:
@@ -127,11 +134,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/mfa/setup:
     post:
       tags:
       - AuthService
-      description: Begin MFA setup (returns secret/challenge based on method)
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Begin MFA setup (returns secret/challenge based on method)
       operationId: AuthService_SetupMfa
       requestBody:
         content:
@@ -152,11 +164,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/mfa/setup/confirm:
     post:
       tags:
       - AuthService
-      description: Confirm MFA setup with verification code
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Confirm MFA setup with verification code
       operationId: AuthService_ConfirmMfaSetup
       requestBody:
         content:
@@ -177,11 +194,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/mfa/status:
     get:
       tags:
       - AuthService
-      description: Get current MFA status for user
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Get current MFA status for user
       operationId: AuthService_GetMfaStatus
       responses:
         '200':
@@ -196,11 +218,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/mfa/verify:
     post:
       tags:
       - AuthService
-      description: Complete MFA verification (when Authenticate returns MFA_REQUIRED)
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Complete MFA verification (when Authenticate returns MFA_REQUIRED)
       operationId: AuthService_VerifyMfa
       requestBody:
         content:
@@ -221,11 +248,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
+      security: []
   /v1/auth/oauth/exchange:
     post:
       tags:
       - AuthService
-      description: Exchange OAuth callback code for tokens (login or register)
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Exchange OAuth callback code for tokens (login or register)
       operationId: AuthService_ExchangeOAuthCode
       requestBody:
         content:
@@ -246,11 +279,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/oauth/link:
     post:
       tags:
       - AuthService
-      description: Link OAuth provider to existing authenticated account
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Link OAuth provider to existing authenticated account
       operationId: AuthService_LinkOAuthProvider
       requestBody:
         content:
@@ -268,11 +306,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/oauth/providers:
     get:
       tags:
       - AuthService
-      description: List linked OAuth providers for current user
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        List linked OAuth providers for current user
       operationId: AuthService_ListLinkedProviders
       responses:
         '200':
@@ -287,11 +330,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/oauth/providers/{provider}:
     delete:
       tags:
       - AuthService
-      description: Unlink OAuth provider from account
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Unlink OAuth provider from account
       operationId: AuthService_UnlinkOAuthProvider
       parameters:
       - name: provider
@@ -317,11 +365,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/oauth/url:
     post:
       tags:
       - AuthService
-      description: Get OAuth authorization URL with PKCE state
+      description: |-
+        ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED.
+
+        Get OAuth authorization URL with PKCE state
       operationId: AuthService_GetOAuthUrl
       requestBody:
         content:
@@ -342,6 +395,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      deprecated: true
+      x-not-implemented: true
   /v1/auth/password/change:
     post:
       tags:
@@ -386,6 +441,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/recovery/start:
     post:
       tags:
@@ -408,6 +464,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/sessions:
     post:
       tags:
@@ -527,6 +584,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/token/refresh:
     post:
       tags:
@@ -552,6 +610,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/verification/confirm:
     post:
       tags:
@@ -577,6 +636,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      security: []
   /v1/auth/verification/request:
     post:
       tags:
@@ -603,7 +663,7 @@ paths:
     get:
       tags:
       - UserService
-      description: "Load users (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
+      description: "**Streaming (SSE):** Load users (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
       operationId: UserService_ListUsers
       parameters:
       - name: userId.value
@@ -661,10 +721,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      x-streaming: sse
+      x-content-type: text/event-stream
     post:
       tags:
       - UserService
-      description: Create a new user
+      description: '**Streaming (SSE):** Create a new user'
       operationId: UserService_CreateUser
       requestBody:
         content:
@@ -685,11 +747,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      x-streaming: sse
+      x-content-type: text/event-stream
   /v1/users/info:
     get:
       tags:
       - UserService
-      description: "Load user info (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
+      description: "**Streaming (SSE):** Load user info (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
       operationId: UserService_ListUsersInfo
       parameters:
       - name: userId.value
@@ -747,6 +811,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+      x-streaming: sse
+      x-content-type: text/event-stream
   /v1/users/{user_id.value}:
     patch:
       tags:
@@ -904,18 +970,22 @@ paths:
         schema:
           type: string
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/operations.v1.VerifyEmailResponse'
         default:
           description: Default error response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/google.rpc.Status'
+        '302':
+          description: Redirect to frontend success or error page.
+          headers:
+            Location:
+              description: Frontend success or error page URL.
+              required: true
+              schema:
+                type: string
+                format: uri
+      security: []
 components:
   schemas:
     auth.v1.AuthResponse:
@@ -1587,9 +1657,9 @@ components:
       properties:
         status:
           enum:
-          - HEALTH_STATUS_UNSPECIFIED
-          - HEALTH_STATUS_HEALTHY
-          - HEALTH_STATUS_UNHEALTHY
+          - unspecified
+          - healthy
+          - unhealthy
           type: string
           description: Component health.
           format: enum
@@ -1614,9 +1684,9 @@ components:
       properties:
         status:
           enum:
-          - HEALTH_STATUS_UNSPECIFIED
-          - HEALTH_STATUS_HEALTHY
-          - HEALTH_STATUS_UNHEALTHY
+          - unspecified
+          - healthy
+          - unhealthy
           type: string
           description: Overall service health.
           format: enum
@@ -1831,6 +1901,12 @@ components:
           type: string
         timezone:
           type: string
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from Authenticate or RefreshTokens
 tags:
 - name: AuthService
   description: "=============================================================================\r\n Auth Service - Authentication, MFA, OAuth, Sessions\r\n =============================================================================\r\n\r\n OWASP Authentication Cheat Sheet compliance:\r\n - Multi-identifier (email, phone)\r\n - MFA support (blocks 99.9% of automated attacks)\r\n - OAuth 2.0 with PKCE\r\n - Account lockout (brute-force protection)\r\n - Generic error messages (prevent enumeration)\r\n - Password change requires current password\r\n\r\n Core flows:\r\n   Registration: SignUp → (optional) ConfirmVerification → Active account\r\n   Login:        Authenticate → (if MFA) VerifyMfa → Tokens issued\r\n   Password:     ChangePassword (has password) | RecoveryStart/Confirm\r\n   (forgot/none)\r\n\r\n Expansion points:\r\n - Passkeys/WebAuthn: Add MFA_METHOD_PASSKEY\r\n - Magic links: Add RequestMagicLink, VerifyMagicLink\r\n - Trusted devices: TrustDevice, Skip MFA on known devices\r\n - Audit logging: Add audit metadata fields\r\n - Rate limiting hints: Return retry-after in responses\r\n ============================================================================="
@@ -1838,3 +1914,5 @@ tags:
   description: "=============================================================================\r\n Operations Service — REST-only contract for OpenAPI generation\r\n =============================================================================\r\n\r\n ⚠️  NOT a callable gRPC service. This proto exists solely to produce a\r\n unified OpenAPI 3.1 spec alongside auth and user services.\r\n\r\n These endpoints (health probes, email verification, metrics) are\r\n infrastructure-level concerns implemented directly in Axum (see\r\n src/routes.rs). Defining them in proto keeps the REST API contract\r\n in the same source-of-truth as the gRPC API.\r\n\r\n gRPC reflection intentionally excludes this service.\r\n ============================================================================="
 - name: UserService
   description: User Service - User CRUD, avatars, admin functions
+security:
+- bearerAuth: []

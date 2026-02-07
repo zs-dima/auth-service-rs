@@ -218,12 +218,26 @@ pub async fn build_app(
     let app = {
         let spec_path = std::env::var("OPENAPI_SPEC_PATH")
             .unwrap_or_else(|_| "api/openapi/v1/openapi.yaml".to_string());
-        let spec_yaml: Arc<str> = std::fs::read_to_string(&spec_path)
-            .unwrap_or_else(|_| {
-                warn!("OpenAPI spec not found at {spec_path} — run `make openapi` to generate");
-                "openapi: \"3.1.0\"\ninfo:\n  title: Auth Service API\n  version: \"0.0.0\"\npaths: {}".to_string()
-            })
-            .into();
+        let spec_yaml: Arc<str> = if let Ok(content) = std::fs::read_to_string(&spec_path) {
+            content.into()
+        } else {
+            warn!(
+                path = %spec_path,
+                "OpenAPI spec not found — run `make openapi` to generate. \
+                 Swagger UI will show a placeholder spec."
+            );
+            format!(
+                "openapi: \"3.1.0\"\n\
+                 info:\n\
+                 \x20 title: Auth Service API (spec not generated)\n\
+                 \x20 version: \"{VERSION}\"\n\
+                 \x20 description: |\n\
+                 \x20   ⚠️ **OpenAPI spec not found at `{spec_path}`.**\n\
+                 \x20   Run `make openapi` to generate the real spec from proto definitions.\n\
+                 paths: {{}}"
+            )
+            .into()
+        };
 
         let etag: Arc<str> = format!("\"{VERSION}\"").into();
 

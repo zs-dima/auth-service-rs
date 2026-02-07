@@ -1,0 +1,69 @@
+name: API Contract Gates
+
+on:
+  pull_request:
+    paths:
+      - "api/proto/**"
+      - "api/openapi/**"
+      - "tool/xtask/src/openapi.rs"
+      - "buf.yaml"
+      - "buf.gen.yaml"
+      - "crates/proto/**"
+  push:
+    branches: [main]
+
+jobs:
+  proto-lint:
+    name: buf lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+      - run: buf lint
+
+  proto-breaking:
+    name: buf breaking
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1
+      - run: buf breaking --against '.git#branch=main'
+
+  openapi-gen:
+    name: OpenAPI spec up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate OpenAPI spec
+        run: cargo xtask openapi
+
+      - name: Verify spec unchanged
+        run: |
+          if ! git diff --exit-code api/openapi/v1/openapi.yaml; then
+            echo "::error::OpenAPI spec is out of date. Run 'make openapi' and commit the result."
+            exit 1
+          fi
+
+  openapi-lint:
+    name: OpenAPI lint (Spectral)
+    runs-on: ubuntu-latest
+    needs: openapi-gen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Spectral
+        run: npm install -g @stoplight/spectral-cli
+
+      - name: Lint OpenAPI spec
+        run: spectral lint api/openapi/v1/openapi.yaml --fail-severity warn
