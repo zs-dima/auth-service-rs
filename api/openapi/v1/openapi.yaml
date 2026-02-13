@@ -3,6 +3,9 @@ info:
   title: Auth Service API
   description: Authentication and user management gRPC/REST API
   version: 0.1.0
+  contact:
+    name: Auth Service
+    url: https://github.com/zs-dima/auth-service-rs
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT

@@ -62,6 +62,9 @@ servers:
 
 # OpenAPI `info` block overrides.
 info:
+  contact:
+    name: Auth Service
+    url: https://github.com/zs-dima/auth-service-rs
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
