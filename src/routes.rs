@@ -53,19 +53,23 @@ use auth_proto::operations::{CheckResult, HealthChecks, HealthResponse, HealthSt
 use axum::{
     Json, Router,
     extract::{Query, State},
-    response::Redirect,
+    response::{IntoResponse, Redirect},
     routing::get,
 };
 use http::StatusCode;
 use serde::Deserialize;
+use std::sync::Arc;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{info, warn};
 
 use crate::core::error_codes;
+use crate::services::{AuthService, UserService};
 use crate::startup::AppState;
 
 /// Build version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Prometheus text exposition media type.
+const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 /// Query parameters for email verification.
 #[derive(Debug, Deserialize)]
@@ -78,8 +82,16 @@ pub struct VerifyEmailQuery {
 ///
 /// Infrastructure endpoints (health, metrics) live at the root.
 /// API endpoints are nested under `/v1` for forward-compatible versioning.
-pub fn rest_routes(state: AppState) -> Router {
+/// Proto-generated REST routes are merged automatically from `google.api.http` annotations.
+pub fn rest_routes(
+    state: AppState,
+    auth_service: Arc<AuthService>,
+    user_service: Arc<UserService>,
+) -> Router {
     let v1 = Router::new().route("/verify-email", get(verify_email_handler));
+
+    // Generate REST routes from proto definitions (google.api.http annotations)
+    let proto_rest = auth_proto::rest::all_rest_routes(auth_service, user_service);
 
     Router::new()
         .route("/", get(|| async { "auth-service" }))
@@ -96,19 +108,35 @@ pub fn rest_routes(state: AppState) -> Router {
             "/verify-email",
             get(verify_email_handler).layer(deprecated_layer()),
         )
+        // Consume AppState before merging proto routes (which have their own state)
         .with_state(state)
+        // Proto-generated REST routes (auth + users services)
+        // Merged after with_state() since proto routes carry their own Arc<S> state
+        .merge(proto_rest)
 }
 
 /// Prometheus metrics endpoint.
 ///
 /// Returns Prometheus-formatted metrics when metrics collection is enabled.
 /// Returns an empty string when metrics are disabled.
-async fn metrics_handler(State(state): State<AppState>) -> String {
-    state
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let body = state
         .metrics
         .as_ref()
         .map(auth_telemetry::PrometheusHandle::render)
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let mut response = body.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static(PROMETHEUS_CONTENT_TYPE),
+    );
+    headers.insert(
+        http::header::CACHE_CONTROL,
+        http::HeaderValue::from_static("no-store, no-cache, max-age=0"),
+    );
+    response
 }
 
 /// Kubernetes readiness probe with dependency health checks.
@@ -116,9 +144,7 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
 /// Returns HTTP 200 with JSON body when all dependencies are healthy,
 /// or HTTP 503 (Service Unavailable) when any dependency is unhealthy.
 /// Kubernetes uses the status code to determine pod readiness.
-async fn readiness_handler(
-    State(state): State<AppState>,
-) -> (StatusCode, Json<HealthResponse>) {
+async fn readiness_handler(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     let db_check = if state.ctx.db().health_check().await {
         CheckResult {
             status: HealthStatus::Healthy.into(),

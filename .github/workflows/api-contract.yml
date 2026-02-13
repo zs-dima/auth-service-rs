@@ -5,7 +5,6 @@ on:
     paths:
       - "api/proto/**"
       - "api/openapi/**"
-      - "tool/xtask/src/openapi.rs"
       - "buf.yaml"
       - "buf.gen.yaml"
       - "crates/proto/**"
@@ -45,8 +44,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install OpenAPI CLI
+        run: cargo install tonic-rest-openapi --features cli
+
       - name: Generate OpenAPI spec
-        run: cargo xtask openapi
+        run: make openapi
 
       - name: Verify spec unchanged
         run: |

@@ -17,7 +17,9 @@ mod verification;
 
 use std::sync::Arc;
 
-use auth_core::{SessionTokens, StatusExt, StrExt, ToProtoDuration, ToProtoTimestamp, TokenGenerator};
+use auth_core::{
+    SessionTokens, StatusExt, StrExt, ToProtoDuration, ToProtoTimestamp, TokenGenerator,
+};
 use auth_db::{UserWithProfile, role_to_proto, status_to_proto};
 use auth_proto::auth::{
     AuthResponse, AuthStatus, ClientInfo, IdentifierType, LockoutInfo, TokenPair, UserSnapshot,

@@ -262,8 +262,7 @@ service AuthService {
   rpc RevokeOtherSessions(RevokeOtherSessionsRequest)
   returns (RevokeSessionsResponse) {
     option (google.api.http) = {
-      post: "/v1/auth/sessions/revoke-others"
-      body: "*"
+      delete: "/v1/auth/sessions"
     };
   }
 }
@@ -324,9 +323,12 @@ enum MfaMethod {
 // =============================================================================
 
 message TokenPair {
-  string                    access_token  = 1;
-  string                    refresh_token = 2;
-  google.protobuf.Timestamp expires_at    = 3;
+  // Short-lived JWT for authenticating API requests
+  string access_token = 1;
+  // Long-lived opaque token used to obtain a new token pair
+  string refresh_token = 2;
+  // Access token expiration timestamp
+  google.protobuf.Timestamp expires_at = 3;
 }
 
 // Client information sent with authentication requests
@@ -350,18 +352,30 @@ message ClientInfo {
 
 // Info returned on successful auth
 message UserSnapshot {
-  core.v1.UUID           user_id          = 1;
-  string                 display_name     = 2;
-  string                 email            = 3;
-  string                 phone            = 4; // User's phone (E.164 format)
-  core.v1.UserRole       role             = 5;
-  core.v1.UserStatus     status           = 6; // Account status
-  bool                   email_verified   = 7; // Email verification status
-  bool                   phone_verified   = 8; // Phone verification status
-  bool                   mfa_enabled      = 9; // Whether MFA is enabled for this account
-  repeated OAuthProvider linked_providers = 10; // Linked OAuth providers
-  string                 avatar_url       = 11; // User's avatar URL
-  bool                   has_password     = 12; // Whether user has a password set
+  // User's unique identifier
+  core.v1.UUID user_id = 1;
+  // Display name
+  string display_name = 2;
+  // Email address
+  string email = 3;
+  // Phone number (E.164 format)
+  string phone = 4;
+  // Authorization role
+  core.v1.UserRole role = 5;
+  // Account status
+  core.v1.UserStatus status = 6;
+  // Whether the email address has been verified
+  bool email_verified = 7;
+  // Whether the phone number has been verified
+  bool phone_verified = 8;
+  // Whether MFA is enabled for this account
+  bool mfa_enabled = 9;
+  // Linked OAuth providers
+  repeated OAuthProvider linked_providers = 10;
+  // User's avatar URL
+  string avatar_url = 11;
+  // Whether the user has a password set (false for OAuth-only accounts)
+  bool has_password = 12;
 }
 
 // Account lockout information
@@ -393,6 +407,7 @@ message MfaChallenge {
 
 // Information about an available MFA method
 message MfaMethodInfo {
+  // MFA method type
   MfaMethod method = 1;
 
   // Masked hint (e.g., "***-***-1234" for SMS, "john***@gm***.com" for email)
@@ -432,8 +447,10 @@ message AuthResponse {
   // Status of authentication attempt
   AuthStatus status = 1;
 
+  // Token pair issued on successful authentication
   TokenPair tokens = 2;
 
+  // Authenticated user profile snapshot
   UserSnapshot user = 3;
 
   // Populated on AUTH_STATUS_MFA_REQUIRED
@@ -498,14 +515,17 @@ message VerifyMfaRequest {
 }
 
 message RefreshTokensRequest {
+  // Refresh token to exchange for a new token pair
   string refresh_token = 1 [ (validate.rules).string.min_len = 1 ];
 }
 
 message ValidateCredentialsRequest {}
 
 message ValidateCredentialsResponse {
-  bool         valid = 1;
-  UserSnapshot user  = 2;
+  // Whether the current session credentials are valid
+  bool valid = 1;
+  // Authenticated user info (populated when valid is true)
+  UserSnapshot user = 2;
 }
 
 message SignOutRequest {}
@@ -570,13 +590,20 @@ message UnlinkOAuthProviderRequest {
 message ListLinkedProvidersRequest {}
 
 // Linked OAuth providers response
-message ListLinkedProvidersResponse { repeated LinkedProvider providers = 1; }
+message ListLinkedProvidersResponse {
+  // List of linked OAuth providers for the current user
+  repeated LinkedProvider providers = 1;
+}
 
 message LinkedProvider {
-  OAuthProvider             provider         = 1;
-  string                    provider_user_id = 2; // Provider's user ID
-  string                    email            = 3; // Email from provider (if available)
-  google.protobuf.Timestamp linked_at        = 4;
+  // OAuth provider type
+  OAuthProvider provider = 1;
+  // Provider's external user ID
+  string provider_user_id = 2;
+  // Email from provider (if available)
+  string email = 3;
+  // Timestamp when the provider was linked
+  google.protobuf.Timestamp linked_at = 4;
 }
 
 // =============================================================================
@@ -664,8 +691,10 @@ message GetMfaStatusResponse {
 
 // Status of a configured MFA method
 message MfaMethodStatus {
-  MfaMethod method  = 1;
-  bool      enabled = 2;
+  // MFA method type
+  MfaMethod method = 1;
+  // Whether this method is currently active
+  bool enabled = 2;
 
   // Masked hint for this method
   string hint = 3;
@@ -713,17 +742,24 @@ message ConfirmMfaSetupRequest {
 // MFA setup result
 message ConfirmMfaSetupResponse {
   oneof result {
+    // Returned on successful MFA enrollment
     MfaSetupSuccess success = 1;
-    MfaSetupError   error   = 2;
+    // Returned when setup verification fails
+    MfaSetupError error = 2;
   }
 }
 
 // Recovery codes (only returned on first MFA enrollment, display once!)
-message MfaSetupSuccess { repeated string recovery_codes = 1; }
+message MfaSetupSuccess {
+  // One-time recovery codes — save securely, each can be used exactly once
+  repeated string recovery_codes = 1;
+}
 
 message MfaSetupError {
-  string message = 1; // Error message if failed
-  string code    = 2;
+  // Human-readable error message
+  string message = 1;
+  // Machine-readable error code
+  string code = 2;
 }
 
 // Disable MFA request
@@ -740,14 +776,17 @@ message DisableMfaRequest {
 // SESSION MANAGEMENT
 // =============================================================================
 
-// Request to list sessions
+// Request to list active sessions.
 message ListSessionsRequest {
-  // Current refresh token to identify which session is active
-  string refresh_token = 1 [ (validate.rules).string.min_len = 1 ];
+  // Active refresh token used to identify the current session
+  string refresh_token = 1 [(validate.rules).string.min_len = 1];
 }
 
 // Response for listing sessions
-message ListSessionsResponse { repeated SessionInfo sessions = 1; }
+message ListSessionsResponse {
+  // Active sessions for the current user
+  repeated SessionInfo sessions = 1;
+}
 
 // Session information returned to clients
 message SessionInfo {

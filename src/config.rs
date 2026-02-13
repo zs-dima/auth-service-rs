@@ -38,6 +38,7 @@ fn resolve_secret(file_path: Option<&str>, direct_value: Option<&str>) -> Option
 /// Secrets support `*_FILE` variants for Docker/Kubernetes secrets.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "auth-service", about = "Authentication gRPC service")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Config {
     /// Cloud Run `PORT` (takes precedence over `GRPC_ADDRESS`).
     #[arg(long, env = "PORT")]

@@ -1,151 +1,86 @@
-use std::io::Result;
+use tonic_rest_build::{
+    RestCodegenConfig, configure_prost_serde, dump_file_descriptor_set, generate,
+};
 
-fn main() -> Result<()> {
-    // operations.proto is compiled for its **message types** only (used by REST handlers).
-    // Its `OperationsService` gRPC service is intentionally unimplemented — it exists
-    // in proto solely to produce OpenAPI paths via gnostic. The generated server trait
-    // is suppressed by `#[allow(dead_code)]` in lib.rs.
-    let proto_files = &[
-        "../../api/proto/auth.proto",
-        "../../api/proto/users.proto",
-        "../../api/proto/core.proto",
-        "../../api/proto/operations.proto",
-    ];
-    let includes = &["../../api/proto"];
+/// Proto source files to compile (derived from `PROTO_INCLUDES`).
+const PROTO_FILES: &[&str] = &[
+    "../../api/proto/auth.proto",
+    "../../api/proto/users.proto",
+    "../../api/proto/core.proto",
+    "../../api/proto/operations.proto",
+];
+const PROTO_INCLUDES: &[&str] = &["../../api/proto"];
 
+/// Additional proto files that are imported but not compiled directly.
+/// Changes to these also trigger a rebuild.
+const PROTO_DEPS: &[&str] = &[
+    "../../api/proto/validate/validate.proto",
+    "../../api/proto/google/api/annotations.proto",
+    "../../api/proto/google/api/http.proto",
+];
+
+/// Maps proto enum FQN → `serde_wkt` module name for JSON string serialization.
+///
+/// When a proto field uses one of these enum types, the build script
+/// automatically wires the corresponding `#[serde(with)]` adapter so the
+/// field serializes as a human-readable string instead of a raw `i32`.
+///
+/// Adding a new enum type here is the **only** manual step required when
+/// introducing new enums — all field discovery is automatic.
+const ENUM_MODULE_MAP: &[(&str, &str)] = &[
+    (".auth.v1.AuthStatus", "auth_status"),
+    (".auth.v1.IdentifierType", "identifier_type"),
+    (".auth.v1.MfaMethod", "mfa_method"),
+    (".auth.v1.OAuthProvider", "oauth_provider"),
+    (".auth.v1.VerificationType", "verification_type"),
+    (".core.v1.UserRole", "user_role"),
+    (".core.v1.UserStatus", "user_status"),
+    (".operations.v1.HealthStatus", "health_status"),
+];
+
+/// Maps well-known protobuf type FQN → `serde_wkt` module name.
+///
+/// These types need custom serde adapters because `prost_types` doesn't
+/// derive `Serialize`/`Deserialize`. Adding a new WKT adapter here
+/// automatically wires it for all fields across all proto files.
+const WKT_MODULE_MAP: &[(&str, &str)] = &[
+    (".google.protobuf.Timestamp", "opt_timestamp"),
+    (".google.protobuf.Duration", "opt_duration"),
+    (".google.protobuf.FieldMask", "opt_field_mask"),
+];
+
+fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let descriptor_path = format!("{out_dir}/file_descriptor_set.bin");
 
-    // Create prost config
+    // Phase 1: Parse protos into a FileDescriptorSet (descriptor-only, no codegen).
+    let descriptor_bytes = dump_file_descriptor_set(PROTO_FILES, PROTO_INCLUDES, &descriptor_path);
+
+    // Phase 2: Build prost config with auto-discovered serde attributes.
     let mut config = prost_build::Config::new();
     config.file_descriptor_set_path(&descriptor_path);
 
-    // Add serde support for JSON serialization (REST/SSE endpoints)
-    config.message_attribute(
-        ".",
-        "#[derive(serde::Serialize, serde::Deserialize)] #[serde(rename_all = \"camelCase\")]",
+    configure_prost_serde(
+        &mut config,
+        &descriptor_bytes,
+        PROTO_FILES,
+        "crate::serde_wkt",
+        WKT_MODULE_MAP,
+        ENUM_MODULE_MAP,
     );
-    config.enum_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
 
-    // Wire serde adapters for prost well-known types (Timestamp, Duration, FieldMask)
-    // which don't implement Serialize/Deserialize natively.
-    let ts = "#[serde(with = \"crate::serde_wkt::opt_timestamp\", default)]";
-    let dur = "#[serde(with = \"crate::serde_wkt::opt_duration\", default)]";
-    let fm = "#[serde(with = \"crate::serde_wkt::opt_field_mask\", default)]";
+    // Operations-specific: HealthResponse.checks is a regular message field (not proto3 `optional`),
+    // so configure_prost_serde won't auto-add skip_serializing_if. Add it manually to match
+    // the REST JSON contract where `checks` is omitted when None.
+    config.field_attribute(
+        ".operations.v1.HealthResponse.checks",
+        "#[serde(skip_serializing_if = \"Option::is_none\")]",
+    );
 
-    // Timestamp fields
-    for path in [
-        ".auth.v1.TokenPair.expires_at",
-        ".auth.v1.LockoutInfo.locked_until",
-        ".auth.v1.MfaChallenge.expires_at",
-        ".auth.v1.LinkedProvider.linked_at",
-        ".auth.v1.MfaMethodStatus.configured_at",
-        ".auth.v1.SetupMfaResponse.expires_at",
-        ".auth.v1.SessionInfo.created_at",
-        ".auth.v1.SessionInfo.last_seen_at",
-        ".auth.v1.SessionInfo.expires_at",
-        ".core.v1.DateRange.from_date",
-        ".core.v1.DateRange.to_date",
-        ".users.v1.User.created_at",
-        ".users.v1.User.updated_at",
-    ] {
-        config.field_attribute(path, ts);
-    }
-
-    // Duration fields
-    for path in [
-        ".auth.v1.LockoutInfo.retry_after",
-        ".users.v1.GetAvatarUploadUrlResponse.expires_in",
-    ] {
-        config.field_attribute(path, dur);
-    }
-
-    // FieldMask fields
-    config.field_attribute(".users.v1.UpdateUserRequest.update_mask", fm);
-    // Operations-specific: skip None fields to match REST JSON contract
-    let skip_none = "#[serde(skip_serializing_if = \"Option::is_none\")]";
-    config.field_attribute(".operations.v1.HealthChecks.storage", skip_none);
-    config.field_attribute(".operations.v1.CheckResult.message", skip_none);
-    config.field_attribute(".operations.v1.HealthResponse.checks", skip_none);
-    // Wire serde adapters for proto enum fields (i32 in prost → string in JSON).
-    // Serializes as proto enum name (e.g., "USER_ROLE_ADMIN") per protobuf JSON mapping.
-
-    // Singular enum fields (i32)
-    for (path, module) in [
-        (".auth.v1.MfaMethodInfo.method", "mfa_method"),
-        (
-            ".auth.v1.AuthenticateRequest.identifier_type",
-            "identifier_type",
-        ),
-        (".auth.v1.AuthResponse.status", "auth_status"),
-        (".auth.v1.SignUpRequest.identifier_type", "identifier_type"),
-        (".auth.v1.VerifyMfaRequest.method", "mfa_method"),
-        (".auth.v1.GetOAuthUrlRequest.provider", "oauth_provider"),
-        (
-            ".auth.v1.UnlinkOAuthProviderRequest.provider",
-            "oauth_provider",
-        ),
-        (".auth.v1.LinkedProvider.provider", "oauth_provider"),
-        (
-            ".auth.v1.RecoveryStartRequest.identifier_type",
-            "identifier_type",
-        ),
-        (
-            ".auth.v1.RequestVerificationRequest.type",
-            "verification_type",
-        ),
-        (
-            ".auth.v1.ConfirmVerificationRequest.type",
-            "verification_type",
-        ),
-        (".auth.v1.MfaMethodStatus.method", "mfa_method"),
-        (".auth.v1.SetupMfaRequest.method", "mfa_method"),
-        (".auth.v1.DisableMfaRequest.method", "mfa_method"),
-        (".auth.v1.UserSnapshot.role", "user_role"),
-        (".auth.v1.UserSnapshot.status", "user_status"),
-        (".users.v1.UserInfo.role", "user_role"),
-        (".users.v1.UserInfo.status", "user_status"),
-        (".users.v1.User.role", "user_role"),
-        (".users.v1.User.status", "user_status"),
-        (".users.v1.CreateUserRequest.role", "user_role"),
-        (".operations.v1.HealthResponse.status", "health_status"),
-        (".operations.v1.CheckResult.status", "health_status"),
-    ] {
-        config.field_attribute(
-            path,
-            format!("#[serde(with = \"crate::serde_wkt::{module}\")]"),
-        );
-    }
-
-    // Optional enum fields (Option<i32>)
-    for (path, module) in [
-        (".users.v1.UpdateUserRequest.role", "user_role"),
-        (".users.v1.UpdateUserRequest.status", "user_status"),
-    ] {
-        config.field_attribute(
-            path,
-            format!("#[serde(with = \"crate::serde_wkt::{module}::optional\", default)]"),
-        );
-    }
-
-    // Repeated enum fields (Vec<i32>)
-    for (path, module) in [
-        (".auth.v1.UserSnapshot.linked_providers", "oauth_provider"),
-        (".users.v1.ListUsersRequest.statuses", "user_status"),
-        (".users.v1.ListUsersRequest.roles", "user_role"),
-    ] {
-        config.field_attribute(
-            path,
-            format!("#[serde(with = \"crate::serde_wkt::{module}::repeated\")]"),
-        );
-    }
-
-    // Configure prost-validate to add Validator derive to all messages
     prost_validate_build::Builder::new()
-        .configure(&mut config, proto_files, includes)
-        .expect("Failed to configure prost-validate");
+        .configure(&mut config, PROTO_FILES, PROTO_INCLUDES)
+        .expect("failed to configure prost-validate");
 
-    // Add tonic service generator to the config
     config.service_generator(
         tonic_prost_build::configure()
             .build_server(true)
@@ -153,19 +88,47 @@ fn main() -> Result<()> {
             .service_generator(),
     );
 
-    // Compile protos with the configured prost config
     config
-        .compile_protos(proto_files, includes)
-        .expect("Failed to compile protos");
+        .compile_protos(PROTO_FILES, PROTO_INCLUDES)
+        .expect("failed to compile protos");
 
-    // Recompile if proto files change
-    println!("cargo:rerun-if-changed=../../api/proto/auth.proto");
-    println!("cargo:rerun-if-changed=../../api/proto/users.proto");
-    println!("cargo:rerun-if-changed=../../api/proto/core.proto");
-    println!("cargo:rerun-if-changed=../../api/proto/operations.proto");
-    println!("cargo:rerun-if-changed=../../api/proto/validate/validate.proto");
-    println!("cargo:rerun-if-changed=../../api/proto/google/api/annotations.proto");
-    println!("cargo:rerun-if-changed=../../api/proto/google/api/http.proto");
+    generate_rest_routes(&out_dir, &descriptor_bytes);
 
-    Ok(())
+    for path in PROTO_FILES.iter().chain(PROTO_DEPS) {
+        println!("cargo:rerun-if-changed={path}");
+    }
+}
+
+/// Generate REST route code from the file descriptor set.
+///
+/// Reads `google.api.http` annotations and generates Axum handlers
+/// that call through the Tonic service traits.
+fn generate_rest_routes(out_dir: &str, descriptor_bytes: &[u8]) {
+    // **Cross-reference:** `api/openapi/config.yaml` → `public_methods` maintains
+    // the same concept for OpenAPI spec `security: []`. That list is a superset —
+    // it also includes OperationsService RPCs with hand-written Axum routes.
+    let rest_config = RestCodegenConfig::new()
+        .proto_root("crate")
+        .runtime_crate("tonic_rest")
+        .wrapper_type("crate::core::Uuid")
+        .extension_type("auth_core::AuthInfo")
+        .package("auth.v1", "auth")
+        .package("users.v1", "users")
+        .public_methods(&[
+            "Authenticate",
+            "SignUp",
+            "RecoveryStart",
+            "RecoveryConfirm",
+            "RefreshTokens",
+            "ConfirmVerification",
+            "VerifyMfa",
+            "GetOAuthUrl",
+            "ExchangeOAuthCode",
+        ])
+        .extra_forwarded_headers(&["cf-connecting-ip"]);
+
+    let rest_code = generate(descriptor_bytes, &rest_config)
+        .expect("failed to generate REST routes from descriptor set");
+    let rest_path = format!("{out_dir}/rest_routes.rs");
+    std::fs::write(&rest_path, rest_code).expect("failed to write REST routes");
 }

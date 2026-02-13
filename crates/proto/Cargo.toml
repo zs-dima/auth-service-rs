@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Generated protobuf code for auth service"
 
+[features]
+default = []
+rest = ["axum", "futures", "serde_json"]
+
 [dependencies]
 # Core (for proto extension traits)
 auth-core = { path = "../core" }
@@ -19,7 +23,16 @@ uuid = "1"
 
 # Serde for JSON serialization (REST/SSE endpoints)
 serde = { version = "1", features = ["derive"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+# REST runtime types (serde WKT adapters + define_enum_serde macro are used unconditionally;
+# REST route generation is behind the 'rest' feature via axum/futures/serde_json)
+# tonic-rest = { version = "0.1", path = "../../../tonic-rest/crates/tonic-rest" }
+tonic-rest = { version = "0.1" }
+
+# REST route generation (optional, behind 'rest' feature)
+axum = { version = "0.8", optional = true, default-features = false, features = ["json", "tokio", "query"] }
+futures = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
+serde_json = { version = "1", optional = true }
 
 # Required by prost-validate derive macro for pattern validation
 regex = "1"
@@ -28,6 +41,8 @@ regex = "1"
 tonic-prost-build = "0.14"
 prost-build = "0.14"
 prost-validate-build = "0.2"
+# tonic-rest-build = { version = "0.1", path = "../../../tonic-rest/crates/tonic-rest-build" }
+tonic-rest-build = { version = "0.1" }
 
 [lints]
 workspace = true

@@ -57,6 +57,15 @@ pub mod operations {
 // Register proto UUID types with the extension trait system
 impl_proto_uuid!(core::Uuid);
 
+/// REST route support — utilities and generated handlers.
+///
+/// Combines hand-written utilities ([`rest::RestError`], [`rest::build_tonic_request`])
+/// with auto-generated route handlers from `google.api.http` proto annotations.
+/// Enable with `features = ["rest"]`.
+#[cfg(feature = "rest")]
+#[allow(clippy::all, clippy::pedantic, unused_imports)]
+pub mod rest;
+
 /// Re-export file descriptor set for gRPC reflection.
 #[cfg_attr(doc, allow(unconditional_recursion))]
 pub const FILE_DESCRIPTOR_SET: &[u8] =

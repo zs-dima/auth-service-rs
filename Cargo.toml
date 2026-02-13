@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "tool/xtask"]
+members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
@@ -35,7 +35,7 @@ auth-core = { path = "crates/core" }
 auth-db = { path = "crates/db" }
 auth-email = { path = "crates/email" }
 auth-mailjet = { path = "crates/mailjet" }
-auth-proto = { path = "crates/proto" }
+auth-proto = { path = "crates/proto", features = ["rest"] }
 auth-storage = { path = "crates/storage" }
 auth-telemetry = { path = "crates/telemetry" }
 

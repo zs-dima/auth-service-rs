@@ -25,6 +25,8 @@ use tower_http::trace::TraceLayer;
 use tracing::{Level, info, warn};
 
 #[cfg(feature = "swagger")]
+use axum::response::IntoResponse;
+#[cfg(feature = "swagger")]
 use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
 use crate::config::{AuthServiceConfig, Config, UserServiceConfig};
@@ -127,11 +129,15 @@ pub async fn build_app(
         email_verification_ttl_hours: config.email_verification_ttl_hours,
     };
 
-    // Build auth service with shared context
-    let auth_service = AuthService::new(auth_config, service_ctx.clone(), geolocation.clone());
+    // Build auth service with shared context (wrapped in Arc for sharing with REST)
+    let auth_service = Arc::new(AuthService::new(
+        auth_config,
+        service_ctx.clone(),
+        geolocation.clone(),
+    ));
 
-    // Build user service with shared context
-    let user_service = UserService::new(user_config, service_ctx.clone());
+    // Build user service with shared context (wrapped in Arc for sharing with REST)
+    let user_service = Arc::new(UserService::new(user_config, service_ctx.clone()));
 
     // Health reporter
     let (health_reporter, health_service) = health_reporter();
@@ -142,13 +148,13 @@ pub async fn build_app(
         .set_serving::<UserServiceServer<UserService>>()
         .await;
 
-    // Auth server
-    let auth_server = AuthServiceServer::new(auth_service)
+    // Auth server (shares Arc with REST routes)
+    let auth_server = AuthServiceServer::from_arc(auth_service.clone())
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
-    // User server
-    let user_server = UserServiceServer::new(user_service)
+    // User server (shares Arc with REST routes)
+    let user_server = UserServiceServer::from_arc(user_service.clone())
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
@@ -174,10 +180,11 @@ pub async fn build_app(
     // Build REST routes with request timeout
     // REST gets HTTP 408 on timeout. gRPC relies on Tonic's built-in deadline
     // propagation via the `grpc-timeout` header, so no separate timeout layer is needed.
-    let rest_router = rest_routes(app_state).layer(TimeoutLayer::with_status_code(
-        http::StatusCode::REQUEST_TIMEOUT,
-        Duration::from_secs(REQUEST_TIMEOUT_SECS),
-    ));
+    let rest_router =
+        rest_routes(app_state, auth_service, user_service).layer(TimeoutLayer::with_status_code(
+            http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(REQUEST_TIMEOUT_SECS),
+        ));
 
     // Combine gRPC and REST
     let grpc_router = if config.grpc_web {
@@ -239,35 +246,65 @@ pub async fn build_app(
             .into()
         };
 
-        let etag: Arc<str> = format!("\"{VERSION}\"").into();
+        // Content-based ETag for efficient revalidation (Cache-Control: no-cache).
+        // Browsers always revalidate with If-None-Match, getting 304 when unchanged.
+        // Hash-based ETag detects spec changes even when the version hasn't bumped.
+        let etag: Arc<str> = {
+            use std::hash::{DefaultHasher, Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            spec_yaml.hash(&mut h);
+            format!("\"spec-{}\"", h.finish())
+        }
+        .into();
 
         app.route(
             "/api-docs/openapi.yaml",
             axum::routing::get({
                 let yaml = spec_yaml;
-                move || {
+                move |req_headers: http::HeaderMap| {
                     let yaml = Arc::clone(&yaml);
                     let etag = Arc::clone(&etag);
                     async move {
+                        let etag_value: http::HeaderValue =
+                            etag.parse().expect("ETag contains only visible ASCII");
+
+                        // Conditional GET: return 304 if client's cached copy is current
+                        if req_headers.get(http::header::IF_NONE_MATCH) == Some(&etag_value) {
+                            return (
+                                http::StatusCode::NOT_MODIFIED,
+                                [(http::header::ETAG, etag_value)],
+                            )
+                                .into_response();
+                        }
+
                         let mut headers = http::HeaderMap::new();
                         headers.insert(
                             http::header::CONTENT_TYPE,
-                            "text/yaml; charset=utf-8".parse().unwrap(),
+                            "application/yaml; charset=utf-8".parse().unwrap(),
                         );
-                        headers.insert(
-                            http::header::CACHE_CONTROL,
-                            "public, max-age=3600".parse().unwrap(),
-                        );
-                        headers.insert(
-                            http::header::ETAG,
-                            etag.parse().expect("VERSION is valid ASCII"),
-                        );
-                        (headers, yaml.to_string())
+                        headers.insert(http::header::CACHE_CONTROL, "no-cache".parse().unwrap());
+                        headers.insert(http::header::ETAG, etag_value);
+                        (headers, yaml.to_string()).into_response()
                     }
                 }
             }),
         )
-        .merge(SwaggerUi::new("/swagger-ui").config(SwaggerConfig::new(["/api-docs/openapi.yaml"])))
+        .merge(
+            SwaggerUi::new("/swagger-ui").config(
+                SwaggerConfig::new(["/api-docs/openapi.yaml"])
+                    .persist_authorization(true)
+                    .try_it_out_enabled(false)
+                    .filter(true)
+                    .deep_linking(true)
+                    .display_request_duration(true)
+                    .show_extensions(true)
+                    .show_common_extensions(true)
+                    .default_model_rendering("model")
+                    .doc_expansion("list")
+                    .display_operation_id(true)
+                    .validator_url("none"),
+            ),
+        )
     };
 
     let app = app.layer(middleware);

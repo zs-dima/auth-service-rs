@@ -6,8 +6,9 @@ target/
 configs/keys.env
 configs/development.env
 
-# Never commit environment files with real credentials!
-# Check your development.env before committing!
+# root README
+/*.md
+!/README.md
 
 # IDE
 .idea/
@@ -29,3 +30,5 @@ src/api/grpc/attribution.rs
 
 # Local config overrides
 configs/local.toml
+
+

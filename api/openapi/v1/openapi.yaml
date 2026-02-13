@@ -3,32 +3,43 @@ info:
   title: Auth Service API
   description: Authentication and user management gRPC/REST API
   version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
 paths:
   /health/live:
     get:
       tags:
       - OperationsService
-      description: "Kubernetes liveness probe.\r\n\r\n Returns plain text \"OK\" when the process is alive."
+      description: |-
+        Kubernetes liveness probe.
+
+         Returns plain text "OK" when the process is alive.
       operationId: OperationsService_LivenessCheck
       responses:
         '200':
           description: OK
           content:
-            application/json:
+            text/plain:
               schema:
-                $ref: '#/components/schemas/operations.v1.LivenessCheckResponse'
+                type: string
+              example: OK
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       security: []
+      summary: Kubernetes liveness probe
   /health/ready:
     get:
       tags:
       - OperationsService
-      description: "Kubernetes readiness probe with dependency health checks.\r\n\r\n Returns JSON with database and S3 storage connectivity status."
+      description: |-
+        Kubernetes readiness probe with dependency health checks.
+
+         Returns JSON with database and S3 storage connectivity status.
       operationId: OperationsService_ReadinessCheck
       responses:
         '200':
@@ -42,40 +53,133 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '503':
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/operations.v1.HealthResponse'
       security: []
+      summary: Kubernetes readiness probe with dependency health checks
   /metrics:
     get:
       tags:
       - OperationsService
-      description: "Prometheus metrics endpoint.\r\n\r\n Returns Prometheus text exposition format when metrics collection is\r\n enabled. Content-Type: text/plain; version=0.0.4; charset=utf-8"
+      description: |-
+        Prometheus metrics endpoint.
+
+         Returns Prometheus text exposition format when metrics collection is
+         enabled. Content-Type: text/plain; version=0.0.4; charset=utf-8
       operationId: OperationsService_Metrics
       responses:
         '200':
           description: OK
           content:
-            application/json:
+            text/plain:
               schema:
-                $ref: '#/components/schemas/operations.v1.MetricsResponse'
+                type: string
+          headers:
+            Content-Type:
+              description: Prometheus text exposition media type.
+              schema:
+                type: string
+                default: text/plain; version=0.0.4; charset=utf-8
+            Cache-Control:
+              description: Caching policy for metrics responses.
+              schema:
+                type: string
+                default: no-store, no-cache, max-age=0
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       security: []
+      summary: Prometheus metrics endpoint
   /v1/auth/authenticate:
     post:
       tags:
       - AuthService
-      description: "Authenticate with identifier (email or phone) and password\r\n Returns AuthResult with tokens on success, or error status with lockout\r\n info"
+      description: |-
+        Authenticate with identifier (email or phone) and password
+         Returns AuthResult with tokens on success, or error status with lockout
+         info
       operationId: AuthService_Authenticate
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.AuthenticateRequest'
+              type: object
+              properties:
+                identifier:
+                  type: string
+                  description: Primary identifier (email or phone)
+                  minLength: 1
+                  maxLength: 254
+                  example: user@example.com
+                identifierType:
+                  enum:
+                  - email
+                  - phone
+                  type: string
+                  description: Type of identifier
+                  example: email
+                password:
+                  type: string
+                  description: 'Password (NIST: min 8 chars, check against breach databases)'
+                  minLength: 1
+                  maxLength: 128
+                  writeOnly: true
+                  example: P@ssw0rd123!
+                installationId:
+                  type: string
+                  format: uuid
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                  example: 550e8400-e29b-41d4-a716-446655440000
+                  description: Installation ID for immediate session
+                clientInfo:
+                  type: object
+                  properties:
+                    deviceId:
+                      type: string
+                      description: Unique device/client identifier
+                      minLength: 1
+                      maxLength: 255
+                      example: string
+                    deviceName:
+                      type: string
+                      description: Human-readable device name
+                      maxLength: 255
+                      example: string
+                    deviceType:
+                      type: string
+                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+                      maxLength: 50
+                      example: string
+                    clientVersion:
+                      type: string
+                      description: App/client version
+                      maxLength: 100
+                      example: 1.0.0
+                    metadata:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+                      example:
+                        key: value
+                  description: Client info for session
+                  required:
+                  - deviceId
+              required:
+              - identifier
+              - password
+              - installationId
+              - clientInfo
         required: true
+        description: Unified authentication request supporting multiple identifier types
       responses:
         '200':
           description: OK
@@ -88,8 +192,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       security: []
+      summary: Authenticate with identifier (email or phone) and password
   /v1/auth/credentials:
     get:
       tags:
@@ -108,7 +213,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+      summary: Validate current session/credentials
   /v1/auth/mfa/disable:
     post:
       tags:
@@ -122,20 +228,46 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.DisableMfaRequest'
+              type: object
+              properties:
+                method:
+                  enum:
+                  - totp
+                  - sms
+                  - email
+                  - recovery_code
+                  type: string
+                  description: Method to disable (or all if not specified)
+                  example: totp
+                password:
+                  type: string
+                  description: |-
+                    Current password for verification (OWASP: verify identity for sensitive
+                     ops)
+                  minLength: 1
+                  writeOnly: true
+                  example: P@ssw0rd123!
+              required:
+              - password
         required: true
+        description: Disable MFA request
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/mfa/setup:
     post:
       tags:
@@ -149,8 +281,26 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.SetupMfaRequest'
+              type: object
+              properties:
+                method:
+                  enum:
+                  - totp
+                  - sms
+                  - email
+                  - recovery_code
+                  type: string
+                  description: Method to set up
+                  example: totp
+                identifier:
+                  type: string
+                  description: 'For SMS/Email: the phone/email to use (must be verified)'
+                  maxLength: 254
+                  example: user@example.com
+              required:
+              - method
         required: true
+        description: Request to set up MFA
       responses:
         '200':
           description: OK
@@ -163,9 +313,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/mfa/setup/confirm:
     post:
       tags:
@@ -179,8 +335,24 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.ConfirmMfaSetupRequest'
+              type: object
+              properties:
+                setupToken:
+                  type: string
+                  description: Setup token from `SetupMfaReply`
+                  minLength: 1
+                  example: eyJhbGciOiJIUzI1NiIs...
+                code:
+                  type: string
+                  description: Verification code
+                  minLength: 6
+                  maxLength: 8
+                  example: '123456'
+              required:
+              - setupToken
+              - code
         required: true
+        description: Confirm MFA setup
       responses:
         '200':
           description: OK
@@ -193,9 +365,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/mfa/status:
     get:
       tags:
@@ -217,9 +395,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/mfa/verify:
     post:
       tags:
@@ -233,8 +417,68 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.VerifyMfaRequest'
+              type: object
+              properties:
+                challengeToken:
+                  type: string
+                  description: Challenge token from MfaChallenge
+                  minLength: 1
+                  example: eyJhbGciOiJIUzI1NiIs...
+                method:
+                  enum:
+                  - totp
+                  - sms
+                  - email
+                  - recovery_code
+                  type: string
+                  description: Method used for verification
+                  example: totp
+                code:
+                  type: string
+                  description: Verification code (6-digit TOTP, SMS code, recovery code, etc.)
+                  minLength: 6
+                  maxLength: 32
+                  example: '123456'
+                clientInfo:
+                  type: object
+                  properties:
+                    deviceId:
+                      type: string
+                      description: Unique device/client identifier
+                      minLength: 1
+                      maxLength: 255
+                      example: string
+                    deviceName:
+                      type: string
+                      description: Human-readable device name
+                      maxLength: 255
+                      example: string
+                    deviceType:
+                      type: string
+                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+                      maxLength: 50
+                      example: string
+                    clientVersion:
+                      type: string
+                      description: App/client version
+                      maxLength: 100
+                      example: 1.0.0
+                    metadata:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+                      example:
+                        key: value
+                  description: Client info for session creation
+                  required:
+                  - deviceId
+              required:
+              - challengeToken
+              - method
+              - code
         required: true
+        description: Verify MFA code to complete authentication
       responses:
         '200':
           description: OK
@@ -247,10 +491,16 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
       security: []
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/oauth/exchange:
     post:
       tags:
@@ -264,8 +514,65 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.ExchangeOAuthCodeRequest'
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: Authorization code from OAuth callback
+                  minLength: 1
+                  example: '123456'
+                state:
+                  type: string
+                  description: State parameter from callback
+                  minLength: 1
+                  example: string
+                installationId:
+                  type: string
+                  format: uuid
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                  example: 550e8400-e29b-41d4-a716-446655440000
+                  description: Installation ID
+                clientInfo:
+                  type: object
+                  properties:
+                    deviceId:
+                      type: string
+                      description: Unique device/client identifier
+                      minLength: 1
+                      maxLength: 255
+                      example: string
+                    deviceName:
+                      type: string
+                      description: Human-readable device name
+                      maxLength: 255
+                      example: string
+                    deviceType:
+                      type: string
+                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+                      maxLength: 50
+                      example: string
+                    clientVersion:
+                      type: string
+                      description: App/client version
+                      maxLength: 100
+                      example: 1.0.0
+                    metadata:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+                      example:
+                        key: value
+                  description: Client info
+                  required:
+                  - deviceId
+              required:
+              - code
+              - state
+              - installationId
+              - clientInfo
         required: true
+        description: Exchange OAuth authorization code
       responses:
         '200':
           description: OK
@@ -278,9 +585,16 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      security: []
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/oauth/link:
     post:
       tags:
@@ -294,20 +608,40 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.LinkOAuthProviderRequest'
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: Authorization code from OAuth callback
+                  minLength: 1
+                  example: '123456'
+                state:
+                  type: string
+                  description: State parameter
+                  minLength: 1
+                  example: string
+              required:
+              - code
+              - state
         required: true
+        description: Link OAuth provider to existing account
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/oauth/providers:
     get:
       tags:
@@ -329,9 +663,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/oauth/providers/{provider}:
     delete:
       tags:
@@ -347,26 +687,29 @@ paths:
         required: true
         schema:
           enum:
-          - OAUTH_PROVIDER_UNSPECIFIED
-          - OAUTH_PROVIDER_GOOGLE
-          - OAUTH_PROVIDER_GITHUB
-          - OAUTH_PROVIDER_MICROSOFT
-          - OAUTH_PROVIDER_APPLE
-          - OAUTH_PROVIDER_FACEBOOK
+          - google
+          - github
+          - microsoft
+          - apple
+          - facebook
           type: string
-          format: enum
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/oauth/url:
     post:
       tags:
@@ -380,8 +723,39 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.GetOAuthUrlRequest'
+              type: object
+              properties:
+                provider:
+                  enum:
+                  - google
+                  - github
+                  - microsoft
+                  - apple
+                  - facebook
+                  type: string
+                  description: OAuth provider
+                  example: google
+                redirectUri:
+                  type: string
+                  description: 'Optional: redirect URI override'
+                  maxLength: 2048
+                  example: https://example.com
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  description: 'Optional: additional scopes'
+                  example:
+                  - string
+                stateData:
+                  type: string
+                  description: 'Optional: state data to preserve across OAuth flow'
+                  maxLength: 1024
+                  example: string
+              required:
+              - provider
         required: true
+        description: Get OAuth authorization URL
       responses:
         '200':
           description: OK
@@ -394,31 +768,59 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      deprecated: true
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '501':
+          description: Not Implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-not-implemented: true
+      security: []
+      summary: ⚠️ **Not yet implemented** — returns gRPC UNIMPLEMENTED
   /v1/auth/password/change:
     post:
       tags:
       - AuthService
-      description: "Change password (requires current password - OWASP requirement)\r\n Use RecoveryStart/Confirm if user forgot password or has no password\r\n For admin password reset without verification, use UserService.SetPassword"
+      description: |-
+        Change password (requires current password - OWASP requirement)
+         Use RecoveryStart/Confirm if user forgot password or has no password
+         For admin password reset without verification, use UserService.SetPassword
       operationId: AuthService_ChangePassword
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.ChangePasswordRequest'
+              type: object
+              properties:
+                currentPassword:
+                  type: string
+                  description: Current password for verification
+                  minLength: 1
+                  writeOnly: true
+                  example: P@ssw0rd123!
+                newPassword:
+                  type: string
+                  description: New password
+                  minLength: 8
+                  maxLength: 128
+                  writeOnly: true
+                  example: N3wP@ssw0rd!456
+              required:
+              - currentPassword
+              - newPassword
         required: true
+        description: Change password (requires current password)
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+      summary: Change password (requires current password - OWASP requirement)
   /v1/auth/recovery/confirm:
     post:
       tags:
@@ -429,54 +831,110 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.RecoveryConfirmRequest'
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Recovery token from email/SMS
+                  minLength: 1
+                  example: eyJhbGciOiJIUzI1NiIs...
+                newPassword:
+                  type: string
+                  description: 'New password (NIST: min 8 chars with MFA, min 15 without)'
+                  minLength: 8
+                  maxLength: 128
+                  writeOnly: true
+                  example: N3wP@ssw0rd!456
+              required:
+              - token
+              - newPassword
         required: true
+        description: Confirm recovery and set new password
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
       security: []
+      summary: Confirm recovery with token and set new password
   /v1/auth/recovery/start:
     post:
       tags:
       - AuthService
-      description: "Start password recovery (always returns success to prevent enumeration)\r\n Also used by OAuth-only users to add a password to their account"
+      description: |-
+        Start password recovery (always returns success to prevent enumeration)
+         Also used by OAuth-only users to add a password to their account
       operationId: AuthService_RecoveryStart
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.RecoveryStartRequest'
+              type: object
+              properties:
+                identifier:
+                  type: string
+                  description: Email or phone number (used to look up account)
+                  minLength: 1
+                  maxLength: 254
+                  example: user@example.com
+                identifierType:
+                  enum:
+                  - email
+                  - phone
+                  type: string
+                  description: Identifier type (email or phone)
+                  example: email
+                idempotencyKey:
+                  type: string
+                  description: |-
+                    Client-generated idempotency key (UUID v4 recommended).
+                     Prevents duplicate recovery emails on network retries.
+                  maxLength: 64
+                  example: 550e8400-e29b-41d4-a716-446655440000
+              required:
+              - identifier
         required: true
+        description: |-
+          Start account recovery (password reset)
+           Always returns success to prevent user enumeration (OWASP)
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
       security: []
+      summary: Start password recovery (always returns success to prevent enumeration)
   /v1/auth/sessions:
     post:
       tags:
       - AuthService
-      description: "List all active sessions for current user\r\n POST because refresh_token in body must not appear in URLs/logs"
+      description: |-
+        List all active sessions for current user
+         POST because refresh_token in body must not appear in URLs/logs
       operationId: AuthService_ListSessions
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.ListSessionsRequest'
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  description: Active refresh token used to identify the current session
+                  minLength: 1
+                  example: eyJhbGciOiJIUzI1NiIs...
+              required:
+              - refreshToken
         required: true
+        description: Request to list active sessions.
       responses:
         '200':
           description: OK
@@ -489,19 +947,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-  /v1/auth/sessions/revoke-others:
-    post:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+      summary: List all active sessions for current user
+    delete:
       tags:
       - AuthService
       description: Revoke all sessions except current
       operationId: AuthService_RevokeOtherSessions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/auth.v1.RevokeOtherSessionsRequest'
-        required: true
       responses:
         '200':
           description: OK
@@ -514,7 +966,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+      summary: Revoke all sessions except current
   /v1/auth/sessions/{deviceId}:
     delete:
       tags:
@@ -527,64 +980,157 @@ paths:
         required: true
         schema:
           type: string
+          minLength: 1
+          maxLength: 255
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+      summary: Revoke a specific session by device_id
   /v1/auth/signout:
     post:
       tags:
       - AuthService
       description: Sign out and invalidate current session
       operationId: AuthService_SignOut
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/auth.v1.SignOutRequest'
-        required: true
+      summary: Sign out and invalidate current session
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
   /v1/auth/signup:
     post:
       tags:
       - AuthService
-      description: "Register a new account\r\n Returns AUTH_STATUS_SUCCESS with tokens, or AUTH_STATUS_PENDING if\r\n verification required"
+      description: |-
+        Register a new account
+         Returns AUTH_STATUS_SUCCESS with tokens, or AUTH_STATUS_PENDING if
+         verification required
       operationId: AuthService_SignUp
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.SignUpRequest'
+              type: object
+              properties:
+                identifier:
+                  type: string
+                  description: User identifier (email or phone in E.164 format)
+                  minLength: 1
+                  maxLength: 254
+                  example: user@example.com
+                identifierType:
+                  enum:
+                  - email
+                  - phone
+                  type: string
+                  description: Type of identifier (auto-detected if not specified based on format)
+                  example: email
+                password:
+                  type: string
+                  description: Password
+                  minLength: 8
+                  maxLength: 128
+                  writeOnly: true
+                  example: P@ssw0rd123!
+                displayName:
+                  type: string
+                  description: Display name
+                  minLength: 1
+                  maxLength: 255
+                  example: John Doe
+                installationId:
+                  type: string
+                  format: uuid
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                  example: 550e8400-e29b-41d4-a716-446655440000
+                  description: Unique installation/app instance ID
+                clientInfo:
+                  type: object
+                  properties:
+                    deviceId:
+                      type: string
+                      description: Unique device/client identifier
+                      minLength: 1
+                      maxLength: 255
+                      example: string
+                    deviceName:
+                      type: string
+                      description: Human-readable device name
+                      maxLength: 255
+                      example: string
+                    deviceType:
+                      type: string
+                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+                      maxLength: 50
+                      example: string
+                    clientVersion:
+                      type: string
+                      description: App/client version
+                      maxLength: 100
+                      example: 1.0.0
+                    metadata:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+                      example:
+                        key: value
+                  description: Client/device information for session (stored in sessions table)
+                  required:
+                  - deviceId
+                locale:
+                  type: string
+                  description: Locale (BCP 47, e.g., `en-US`)
+                  maxLength: 35
+                  example: en-US
+                timezone:
+                  type: string
+                  description: Timezone (IANA, e.g., `America/New_York`)
+                  maxLength: 64
+                  example: America/New_York
+                idempotencyKey:
+                  type: string
+                  description: |-
+                    Client-generated idempotency key (UUID v4 recommended).
+                     Guarantees at-most-once execution for retries on network failures.
+                     Server ignores the request body if a matching key was already processed
+                     and returns the original response.
+                  maxLength: 64
+                  example: 550e8400-e29b-41d4-a716-446655440000
+              required:
+              - identifier
+              - password
+              - displayName
+              - installationId
+              - clientInfo
         required: true
+        description: Register a new user account
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/auth.v1.AuthResponse'
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/auth.v1.AuthResponse'
       security: []
+      summary: Register a new account
   /v1/auth/token/refresh:
     post:
       tags:
@@ -595,7 +1141,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.RefreshTokensRequest'
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  description: Refresh token to exchange for a new token pair
+                  minLength: 1
+                  example: eyJhbGciOiJIUzI1NiIs...
+              required:
+              - refreshToken
         required: true
       responses:
         '200':
@@ -609,8 +1163,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       security: []
+      summary: Refresh access token using refresh token
   /v1/auth/verification/confirm:
     post:
       tags:
@@ -621,7 +1176,65 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.ConfirmVerificationRequest'
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Verification token from email/SMS
+                  minLength: 1
+                  example: eyJhbGciOiJIUzI1NiIs...
+                type:
+                  enum:
+                  - email
+                  - phone
+                  type: string
+                  description: Type of verification
+                  example: email
+                installationId:
+                  type: string
+                  format: uuid
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                  example: 550e8400-e29b-41d4-a716-446655440000
+                  description: Installation ID for session creation
+                clientInfo:
+                  type: object
+                  properties:
+                    deviceId:
+                      type: string
+                      description: Unique device/client identifier
+                      minLength: 1
+                      maxLength: 255
+                      example: string
+                    deviceName:
+                      type: string
+                      description: Human-readable device name
+                      maxLength: 255
+                      example: string
+                    deviceType:
+                      type: string
+                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+                      maxLength: 50
+                      example: string
+                    clientVersion:
+                      type: string
+                      description: App/client version
+                      maxLength: 100
+                      example: 1.0.0
+                    metadata:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+                      example:
+                        key: value
+                  description: Client info for session (enables auto-login after verification)
+                  required:
+                  - deviceId
+              required:
+              - token
+              - type
+              - installationId
+              - clientInfo
         required: true
       responses:
         '200':
@@ -635,8 +1248,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       security: []
+      summary: Confirm verification with token - returns auth tokens for seamless login
   /v1/auth/verification/request:
     post:
       tags:
@@ -647,72 +1261,103 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/auth.v1.RequestVerificationRequest'
+              type: object
+              properties:
+                type:
+                  enum:
+                  - email
+                  - phone
+                  type: string
+                  description: Type of verification
+                  example: email
+              required:
+              - type
         required: true
       responses:
-        '200':
-          description: OK
-          content: {}
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+      summary: Request verification code for email or phone (resend)
   /v1/users:
     get:
       tags:
       - UserService
-      description: "**Streaming (SSE):** Load users (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
+      description: |-
+        **Streaming (SSE):** Load users (server-streaming).
+
+         Transport behavior:
+         - gRPC / gRPC-Web: native server-streaming (built-in reconnection via
+         gRPC-Web layer)
+         - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.
+           Supports EventSource auto-reconnection and Last-Event-ID resume.
+
+         OpenAPI: annotated with `x-streaming: sse` and `x-content-type:
+         text/event-stream` by the post-processing step (`make openapi`).
       operationId: UserService_ListUsers
       parameters:
-      - name: userId.value
+      - name: userId
         in: query
+        description: UUID of the user
         schema:
           type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
       - name: statuses
         in: query
+        description: Filter by account statuses
         schema:
           type: array
           items:
             enum:
-            - USER_STATUS_UNSPECIFIED
-            - USER_STATUS_PENDING
-            - USER_STATUS_ACTIVE
-            - USER_STATUS_SUSPENDED
-            - USER_STATUS_DELETED
+            - pending
+            - active
+            - suspended
+            - deleted
             type: string
-            format: enum
       - name: roles
         in: query
+        description: Filter by roles
         schema:
           type: array
           items:
             enum:
-            - USER_ROLE_UNSPECIFIED
-            - USER_ROLE_ADMIN
-            - USER_ROLE_USER
-            - USER_ROLE_GUEST
+            - admin
+            - user
+            - guest
             type: string
-            format: enum
       - name: query
         in: query
+        description: Free-text search query (name, email, phone)
         schema:
           type: string
       - name: pageSize
         in: query
+        description: Maximum number of results per page (0 = server default)
         schema:
           type: integer
           format: int32
       - name: pageToken
         in: query
+        description: Pagination cursor from a previous response
+        schema:
+          type: string
+      - name: Last-Event-ID
+        in: header
+        required: false
+        description: Reconnection cursor from the last received SSE event. When set, the server resumes the stream from this point.
         schema:
           type: string
       responses:
         '200':
           description: OK
           content:
-            application/json:
+            text/event-stream:
               schema:
                 $ref: '#/components/schemas/users.v1.User'
         default:
@@ -720,89 +1365,153 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-streaming: sse
       x-content-type: text/event-stream
+      summary: '**Streaming (SSE):** Load users (server-streaming)'
     post:
       tags:
       - UserService
-      description: '**Streaming (SSE):** Create a new user'
+      description: Create a new user
       operationId: UserService_CreateUser
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/users.v1.CreateUserRequest'
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Display name
+                  minLength: 1
+                  maxLength: 255
+                  example: John Doe
+                email:
+                  type: string
+                  description: Email (optional if phone is provided)
+                  maxLength: 254
+                  example: user@example.com
+                phone:
+                  type: string
+                  description: Phone in E.164 format (optional if email is provided)
+                  maxLength: 16
+                  example: '+1234567890'
+                password:
+                  type: string
+                  description: Password (optional for OAuth-only accounts)
+                  maxLength: 128
+                  writeOnly: true
+                  example: P@ssw0rd123!
+                role:
+                  enum:
+                  - admin
+                  - user
+                  - guest
+                  type: string
+                  description: User role
+                  example: admin
+                locale:
+                  type: string
+                  description: Locale (BCP 47)
+                  maxLength: 35
+                  example: en-US
+                timezone:
+                  type: string
+                  description: Timezone (IANA)
+                  maxLength: 64
+                  example: America/New_York
+              required:
+              - name
         required: true
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/users.v1.User'
         default:
           description: Default error response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-      x-streaming: sse
-      x-content-type: text/event-stream
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.User'
+      summary: Create a new user
   /v1/users/info:
     get:
       tags:
       - UserService
-      description: "**Streaming (SSE):** Load user info (server-streaming).\r\n\r\n Transport behavior:\r\n - gRPC / gRPC-Web: native server-streaming (built-in reconnection via\r\n gRPC-Web layer)\r\n - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.\r\n   Supports EventSource auto-reconnection and Last-Event-ID resume.\r\n\r\n OpenAPI: annotated with `x-streaming: sse` and `x-content-type:\r\n text/event-stream` by the post-processing step (`make openapi`)."
+      description: |-
+        **Streaming (SSE):** Load user info (server-streaming).
+
+         Transport behavior:
+         - gRPC / gRPC-Web: native server-streaming (built-in reconnection via
+         gRPC-Web layer)
+         - REST: Server-Sent Events (text/event-stream) via Axum SSE handler.
+           Supports EventSource auto-reconnection and Last-Event-ID resume.
+
+         OpenAPI: annotated with `x-streaming: sse` and `x-content-type:
+         text/event-stream` by the post-processing step (`make openapi`).
       operationId: UserService_ListUsersInfo
       parameters:
-      - name: userId.value
+      - name: userId
         in: query
+        description: UUID of the user
         schema:
           type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
       - name: statuses
         in: query
+        description: Filter by account statuses
         schema:
           type: array
           items:
             enum:
-            - USER_STATUS_UNSPECIFIED
-            - USER_STATUS_PENDING
-            - USER_STATUS_ACTIVE
-            - USER_STATUS_SUSPENDED
-            - USER_STATUS_DELETED
+            - pending
+            - active
+            - suspended
+            - deleted
             type: string
-            format: enum
       - name: roles
         in: query
+        description: Filter by roles
         schema:
           type: array
           items:
             enum:
-            - USER_ROLE_UNSPECIFIED
-            - USER_ROLE_ADMIN
-            - USER_ROLE_USER
-            - USER_ROLE_GUEST
+            - admin
+            - user
+            - guest
             type: string
-            format: enum
       - name: query
         in: query
+        description: Free-text search query (name, email, phone)
         schema:
           type: string
       - name: pageSize
         in: query
+        description: Maximum number of results per page (0 = server default)
         schema:
           type: integer
           format: int32
       - name: pageToken
         in: query
+        description: Pagination cursor from a previous response
+        schema:
+          type: string
+      - name: Last-Event-ID
+        in: header
+        required: false
+        description: Reconnection cursor from the last received SSE event. When set, the server resumes the stream from this point.
         schema:
           type: string
       responses:
         '200':
           description: OK
           content:
-            application/json:
+            text/event-stream:
               schema:
                 $ref: '#/components/schemas/users.v1.UserInfo'
         default:
@@ -810,158 +1519,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
       x-streaming: sse
       x-content-type: text/event-stream
-  /v1/users/{user_id.value}:
-    patch:
-      tags:
-      - UserService
-      description: Update user
-      operationId: UserService_UpdateUser
-      parameters:
-      - name: user_id.value
-        in: path
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/users.v1.UpdateUserRequest'
-        required: true
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/users.v1.User'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-  /v1/users/{user_id.value}/avatar:
-    delete:
-      tags:
-      - UserService
-      description: Delete user avatar
-      operationId: UserService_DeleteAvatar
-      parameters:
-      - name: user_id.value
-        in: path
-        required: true
-        schema:
-          type: string
-      - name: userId.value
-        in: query
-        schema:
-          type: string
-      responses:
-        '200':
-          description: OK
-          content: {}
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-  /v1/users/{user_id.value}/avatar/confirm:
-    post:
-      tags:
-      - UserService
-      description: Confirm avatar upload completed
-      operationId: UserService_ConfirmAvatarUpload
-      parameters:
-      - name: user_id.value
-        in: path
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/users.v1.ConfirmAvatarUploadRequest'
-        required: true
-      responses:
-        '200':
-          description: OK
-          content: {}
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-  /v1/users/{user_id.value}/avatar/upload-url:
-    post:
-      tags:
-      - UserService
-      description: Get presigned URL for avatar upload
-      operationId: UserService_GetAvatarUploadUrl
-      parameters:
-      - name: user_id.value
-        in: path
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/users.v1.GetAvatarUploadUrlRequest'
-        required: true
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/users.v1.GetAvatarUploadUrlResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/google.rpc.Status'
-  /v1/users/{user_id.value}/password:
-    put:
-      tags:
-      - UserService
-      description: "Set password (admin only - bypasses current password requirement)\r\n For user self-service password change, use AuthService.ChangePassword"
-      operationId: UserService_SetPassword
-      parameters:
-      - name: user_id.value
-        in: path
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/users.v1.SetPasswordRequest'
-        required: true
-      responses:
-        '200':
-          description: OK
-          content: {}
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+      summary: '**Streaming (SSE):** Load user info (server-streaming)'
   /v1/verify-email:
     get:
       tags:
       - OperationsService
-      description: "Handle email verification link clicks.\r\n\r\n Flow: Email link → GET /v1/verify-email?token=xxx → 302 redirect →\r\n Frontend. The actual HTTP response is a 302 redirect, not the message body."
+      description: |-
+        Handle email verification link clicks.
+
+         Flow: Email link → GET /v1/verify-email?token=xxx → 302 redirect →
+         Frontend. The actual HTTP response is a 302 redirect, not the message body.
       operationId: OperationsService_VerifyEmail
       parameters:
       - name: token
@@ -975,7 +1545,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/google.rpc.Status'
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
         '302':
           description: Redirect to frontend success or error page.
           headers:
@@ -986,6 +1556,230 @@ paths:
                 type: string
                 format: uri
       security: []
+      summary: Handle email verification link clicks
+  /v1/users/{user_id}:
+    patch:
+      tags:
+      - UserService
+      description: Update user
+      operationId: UserService_UpdateUser
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+        description: Resource UUID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timezone:
+                  type: string
+                  description: Timezone (IANA)
+                  maxLength: 64
+                updateMask:
+                  type: string
+                  description: Fields to update (if empty, all provided fields are applied)
+                  format: field-mask
+                name:
+                  type: string
+                  description: Display name
+                  maxLength: 255
+                email:
+                  type: string
+                  description: Email address
+                  maxLength: 254
+                phone:
+                  type: string
+                  description: Phone number (E.164 format)
+                  maxLength: 16
+                role:
+                  enum:
+                  - admin
+                  - user
+                  - guest
+                  type: string
+                  description: Authorization role (admin only)
+                status:
+                  enum:
+                  - pending
+                  - active
+                  - suspended
+                  - deleted
+                  type: string
+                  description: Account status (admin only)
+                locale:
+                  type: string
+                  description: Locale (BCP 47)
+                  maxLength: 35
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.User'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+      summary: Update user
+  /v1/users/{user_id}/avatar:
+    delete:
+      tags:
+      - UserService
+      description: Delete user avatar
+      operationId: UserService_DeleteAvatar
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+        description: Resource UUID
+      responses:
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+      summary: Delete user avatar
+  /v1/users/{user_id}/avatar/confirm:
+    post:
+      tags:
+      - UserService
+      description: Confirm avatar upload completed
+      operationId: UserService_ConfirmAvatarUpload
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+        description: Resource UUID
+      summary: Confirm avatar upload completed
+      responses:
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+  /v1/users/{user_id}/avatar/upload-url:
+    post:
+      tags:
+      - UserService
+      description: Get presigned URL for avatar upload
+      operationId: UserService_GetAvatarUploadUrl
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+        description: Resource UUID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contentSize:
+                  type: integer
+                  description: File size in bytes (1 byte to 10 MB)
+                  minimum: 1
+                  maximum: 10485760
+                contentType:
+                  type: string
+                  description: MIME type of the image to upload
+                  enum:
+                  - image/jpeg
+                  - image/png
+                  - image/webp
+              description: Request for presigned upload URL
+              required:
+              - contentType
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/users.v1.GetAvatarUploadUrlResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+      summary: Get presigned URL for avatar upload
+  /v1/users/{user_id}/password:
+    put:
+      tags:
+      - UserService
+      description: |-
+        Set password (admin only - bypasses current password requirement)
+         For user self-service password change, use AuthService.ChangePassword
+      operationId: UserService_SetPassword
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+        description: Resource UUID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                  description: 'New password (NIST: min 8 chars, checked against breach databases)'
+                  minLength: 8
+                  maxLength: 128
+                  writeOnly: true
+              required:
+              - password
+        required: true
+      responses:
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rest.v1.ErrorResponse'
+        '204':
+          description: No Content
+      summary: Set password (admin only - bypasses current password requirement)
 components:
   schemas:
     auth.v1.AuthResponse:
@@ -993,20 +1787,22 @@ components:
       properties:
         status:
           enum:
-          - AUTH_STATUS_UNSPECIFIED
-          - AUTH_STATUS_SUCCESS
-          - AUTH_STATUS_MFA_REQUIRED
-          - AUTH_STATUS_FAILED
-          - AUTH_STATUS_LOCKED
-          - AUTH_STATUS_SUSPENDED
-          - AUTH_STATUS_PENDING
+          - success
+          - mfa_required
+          - failed
+          - locked
+          - suspended
+          - pending
           type: string
           description: Status of authentication attempt
-          format: enum
         tokens:
-          $ref: '#/components/schemas/auth.v1.TokenPair'
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.TokenPair'
+          description: Token pair issued on successful authentication
         user:
-          $ref: '#/components/schemas/auth.v1.UserSnapshot'
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.UserSnapshot'
+          description: Authenticated user profile snapshot
         mfaChallenge:
           allOf:
           - $ref: '#/components/schemas/auth.v1.MfaChallenge'
@@ -1018,49 +1814,79 @@ components:
         message:
           type: string
           description: Message for user (generic per OWASP - prevent enumeration)
-      description: "Authentication result\r\n Returns tokens on success, or MFA challenge if second factor required"
-    auth.v1.AuthenticateRequest:
+      description: |-
+        Authentication result
+         Returns tokens on success, or MFA challenge if second factor required
+    users.v1.User:
       type: object
       properties:
-        identifier:
+        id:
           type: string
-          description: Primary identifier (email or phone)
-        identifierType:
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: User's unique identifier
+        name:
+          type: string
+          description: Display name
+        email:
+          type: string
+          description: Email address
+        phone:
+          type: string
+          description: Phone number (E.164 format)
+        role:
           enum:
-          - IDENTIFIER_TYPE_UNSPECIFIED
-          - IDENTIFIER_TYPE_EMAIL
-          - IDENTIFIER_TYPE_PHONE
+          - admin
+          - user
+          - guest
           type: string
-          description: Type of identifier
-          format: enum
-        password:
+          description: Authorization role
+        status:
+          enum:
+          - pending
+          - active
+          - suspended
+          - deleted
           type: string
-          description: 'Password (NIST: min 8 chars, check against breach databases)'
-        installationId:
-          allOf:
-          - $ref: '#/components/schemas/core.v1.UUID'
-          description: Installation ID for immediate session
-        clientInfo:
-          allOf:
-          - $ref: '#/components/schemas/auth.v1.ClientInfo'
-          description: Client info for session
-      description: Unified authentication request supporting multiple identifier types
-    auth.v1.ChangePasswordRequest:
-      type: object
-      properties:
-        currentPassword:
+          description: Account status
+        emailVerified:
+          type: boolean
+          description: Whether the email address has been verified
+        phoneVerified:
+          type: boolean
+          description: Whether the phone number has been verified
+        mfaEnabled:
+          type: boolean
+          description: Whether MFA is enabled for this account
+        hasPassword:
+          type: boolean
+          description: Whether the user has a password set (false for OAuth-only accounts)
+        avatarUrl:
           type: string
-          description: Current password for verification
-        newPassword:
+          description: Avatar image URL
+        locale:
           type: string
-          description: New password
-      description: Change password (requires current password)
-    auth.v1.ClientInfo:
+          description: Locale (BCP 47, e.g., `en-US`)
+        timezone:
+          type: string
+          description: Timezone (IANA, e.g., `America/New_York`)
+        createdAt:
+          type: string
+          description: Account creation timestamp
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          description: Last profile update timestamp
+          format: date-time
+          readOnly: true
+    auth.v1.SessionInfo:
       type: object
       properties:
         deviceId:
           type: string
-          description: Unique device/client identifier
+          description: Unique device identifier
         deviceName:
           type: string
           description: Human-readable device name
@@ -1069,88 +1895,162 @@ components:
           description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
         clientVersion:
           type: string
-          description: App/client version
+          description: App version
+        ipAddress:
+          type: string
+          description: Last seen IP address (may be masked for privacy)
+        ipCountry:
+          type: string
+          description: ISO 3166-1 alpha-2 country code
+        createdAt:
+          type: string
+          description: Session creation timestamp
+          format: date-time
+          readOnly: true
+        lastSeenAt:
+          type: string
+          description: Last activity timestamp
+          format: date-time
+          readOnly: true
+        expiresAt:
+          type: string
+          description: Session expiration timestamp
+          format: date-time
+          readOnly: true
+        isCurrent:
+          type: boolean
+          description: True if this is the current session
+        ipCreatedBy:
+          type: string
+          description: IP address at session creation
+        activityCount:
+          type: integer
+          description: Number of token refreshes (activity indicator)
+          format: int32
         metadata:
           type: object
           additionalProperties:
             type: string
-          description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
-      description: Client information sent with authentication requests
-    auth.v1.ConfirmMfaSetupRequest:
+          description: Session metadata (user agent, fingerprint, etc.)
+      description: Session information returned to clients
+    auth.v1.RevokeSessionsResponse:
       type: object
       properties:
-        setupToken:
+        revokedCount:
+          type: integer
+          description: Number of sessions revoked
+          format: int32
+      description: Response for revoking multiple sessions
+    users.v1.UserInfo:
+      type: object
+      properties:
+        id:
           type: string
-          description: Setup token from `SetupMfaReply`
-        code:
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: User's unique identifier
+        name:
           type: string
-          description: Verification code
-      description: Confirm MFA setup
+          description: Display name
+        email:
+          type: string
+          description: Email address
+        phone:
+          type: string
+          description: Phone number (E.164 format)
+        role:
+          enum:
+          - admin
+          - user
+          - guest
+          type: string
+          description: Authorization role
+        status:
+          enum:
+          - pending
+          - active
+          - suspended
+          - deleted
+          type: string
+          description: Account status
+        avatarUrl:
+          type: string
+          description: Avatar image URL
+        locale:
+          type: string
+          description: Locale (BCP 47, e.g., `en-US`)
+        timezone:
+          type: string
+          description: Timezone (IANA, e.g., `America/New_York`)
     auth.v1.ConfirmMfaSetupResponse:
       type: object
       properties:
         success:
-          $ref: '#/components/schemas/auth.v1.MfaSetupSuccess'
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.MfaSetupSuccess'
+          description: Returned on successful MFA enrollment
         error:
-          $ref: '#/components/schemas/auth.v1.MfaSetupError'
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.MfaSetupError'
+          description: Returned when setup verification fails
       description: MFA setup result
-    auth.v1.ConfirmVerificationRequest:
+    users.v1.GetAvatarUploadUrlResponse:
       type: object
       properties:
-        token:
+        uploadUrl:
           type: string
-          description: Verification token from email/SMS
-        type:
-          enum:
-          - VERIFICATION_TYPE_UNSPECIFIED
-          - VERIFICATION_TYPE_EMAIL
-          - VERIFICATION_TYPE_PHONE
+          description: Presigned PUT URL for S3
+        expiresIn:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
-          description: Type of verification
-          format: enum
-        installationId:
-          allOf:
-          - $ref: '#/components/schemas/core.v1.UUID'
-          description: Installation ID for session creation
-        clientInfo:
-          allOf:
-          - $ref: '#/components/schemas/auth.v1.ClientInfo'
-          description: Client info for session (enables auto-login after verification)
-    auth.v1.DisableMfaRequest:
+          description: URL expiration in seconds
+          example: 300s
+      description: Response with presigned URL for direct S3 upload
+    auth.v1.SetupMfaResponse:
       type: object
       properties:
-        method:
-          enum:
-          - MFA_METHOD_UNSPECIFIED
-          - MFA_METHOD_TOTP
-          - MFA_METHOD_SMS
-          - MFA_METHOD_EMAIL
-          - MFA_METHOD_RECOVERY_CODE
+        secret:
           type: string
-          description: Method to disable (or all if not specified)
-          format: enum
-        password:
+          description: 'For TOTP: base32-encoded secret'
+        provisioningUri:
           type: string
-          description: "Current password for verification (OWASP: verify identity for sensitive\r\n ops)"
-      description: Disable MFA request
-    auth.v1.ExchangeOAuthCodeRequest:
+          description: 'For TOTP: otpauth:// URI for QR code generation'
+        maskedDestination:
+          type: string
+          description: 'For SMS/Email: masked destination where code was sent'
+        setupToken:
+          type: string
+          description: Setup token to correlate with `ConfirmMfaSetup`
+        expiresAt:
+          type: string
+          description: Setup expires at
+          format: date-time
+          readOnly: true
+      description: MFA setup response
+    rest.v1.ErrorResponse:
       type: object
+      required:
+      - error
       properties:
-        code:
-          type: string
-          description: Authorization code from OAuth callback
-        state:
-          type: string
-          description: State parameter from callback
-        installationId:
-          allOf:
-          - $ref: '#/components/schemas/core.v1.UUID'
-          description: Installation ID
-        clientInfo:
-          allOf:
-          - $ref: '#/components/schemas/auth.v1.ClientInfo'
-          description: Client info
-      description: Exchange OAuth authorization code
+        error:
+          type: object
+          required:
+          - code
+          - message
+          - status
+          properties:
+            code:
+              type: integer
+              format: int32
+              description: HTTP status code.
+            message:
+              type: string
+              description: Human-readable error message.
+            status:
+              type: string
+              description: gRPC status code name (e.g., INVALID_ARGUMENT).
+      description: REST error response envelope.
     auth.v1.GetMfaStatusResponse:
       type: object
       properties:
@@ -1167,32 +2067,19 @@ components:
           description: Number of unused recovery codes remaining
           format: int32
       description: MFA status for current user
-    auth.v1.GetOAuthUrlRequest:
+    operations.v1.CheckResult:
       type: object
       properties:
-        provider:
+        status:
           enum:
-          - OAUTH_PROVIDER_UNSPECIFIED
-          - OAUTH_PROVIDER_GOOGLE
-          - OAUTH_PROVIDER_GITHUB
-          - OAUTH_PROVIDER_MICROSOFT
-          - OAUTH_PROVIDER_APPLE
-          - OAUTH_PROVIDER_FACEBOOK
+          - healthy
+          - unhealthy
           type: string
-          description: OAuth provider
-          format: enum
-        redirectUri:
+          description: Component health.
+        message:
           type: string
-          description: 'Optional: redirect URI override'
-        scopes:
-          type: array
-          items:
-            type: string
-          description: 'Optional: additional scopes'
-        stateData:
-          type: string
-          description: 'Optional: state data to preserve across OAuth flow'
-      description: Get OAuth authorization URL
+          description: Error detail — present only when status is HEALTH_STATUS_UNHEALTHY.
+      description: Individual dependency check result.
     auth.v1.GetOAuthUrlResponse:
       type: object
       properties:
@@ -1203,36 +2090,43 @@ components:
           type: string
           description: State parameter (for CSRF protection)
       description: OAuth URL response
-    auth.v1.LinkOAuthProviderRequest:
+    auth.v1.TokenPair:
       type: object
       properties:
-        code:
+        accessToken:
           type: string
-          description: Authorization code from OAuth callback
-        state:
+          description: Short-lived JWT for authenticating API requests
+        refreshToken:
           type: string
-          description: State parameter
-      description: Link OAuth provider to existing account
+          description: Long-lived opaque token used to obtain a new token pair
+        expiresAt:
+          type: string
+          description: Access token expiration timestamp
+          format: date-time
+          readOnly: true
     auth.v1.LinkedProvider:
       type: object
       properties:
         provider:
           enum:
-          - OAUTH_PROVIDER_UNSPECIFIED
-          - OAUTH_PROVIDER_GOOGLE
-          - OAUTH_PROVIDER_GITHUB
-          - OAUTH_PROVIDER_MICROSOFT
-          - OAUTH_PROVIDER_APPLE
-          - OAUTH_PROVIDER_FACEBOOK
+          - google
+          - github
+          - microsoft
+          - apple
+          - facebook
           type: string
-          format: enum
+          description: OAuth provider type
         providerUserId:
           type: string
+          description: Provider's external user ID
         email:
           type: string
+          description: Email from provider (if available)
         linkedAt:
           type: string
+          description: Timestamp when the provider was linked
           format: date-time
+          readOnly: true
     auth.v1.ListLinkedProvidersResponse:
       type: object
       properties:
@@ -1240,14 +2134,68 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/auth.v1.LinkedProvider'
+          description: List of linked OAuth providers for the current user
       description: Linked OAuth providers response
-    auth.v1.ListSessionsRequest:
+    auth.v1.UserSnapshot:
       type: object
       properties:
-        refreshToken:
+        userId:
           type: string
-          description: Current refresh token to identify which session is active
-      description: Request to list sessions
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: User's unique identifier
+        displayName:
+          type: string
+          description: Display name
+        email:
+          type: string
+          description: Email address
+        phone:
+          type: string
+          description: Phone number (E.164 format)
+        role:
+          enum:
+          - admin
+          - user
+          - guest
+          type: string
+          description: Authorization role
+        status:
+          enum:
+          - pending
+          - active
+          - suspended
+          - deleted
+          type: string
+          description: Account status
+        emailVerified:
+          type: boolean
+          description: Whether the email address has been verified
+        phoneVerified:
+          type: boolean
+          description: Whether the phone number has been verified
+        mfaEnabled:
+          type: boolean
+          description: Whether MFA is enabled for this account
+        linkedProviders:
+          type: array
+          items:
+            enum:
+            - google
+            - github
+            - microsoft
+            - apple
+            - facebook
+            type: string
+          description: Linked OAuth providers
+        avatarUrl:
+          type: string
+          description: User's avatar URL
+        hasPassword:
+          type: boolean
+          description: Whether the user has a password set (false for OAuth-only accounts)
+      description: Info returned on successful auth
     auth.v1.ListSessionsResponse:
       type: object
       properties:
@@ -1255,6 +2203,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/auth.v1.SessionInfo'
+          description: Active sessions for the current user
       description: Response for listing sessions
     auth.v1.LockoutInfo:
       type: object
@@ -1263,6 +2212,7 @@ components:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
           description: Duration until account is unlocked
+          example: 300s
         failedAttempts:
           type: integer
           description: Number of failed attempts
@@ -1291,19 +2241,19 @@ components:
           type: string
           description: Challenge expiration - typically 5 minutes
           format: date-time
+          readOnly: true
       description: MFA challenge - returned when second factor is required
     auth.v1.MfaMethodInfo:
       type: object
       properties:
         method:
           enum:
-          - MFA_METHOD_UNSPECIFIED
-          - MFA_METHOD_TOTP
-          - MFA_METHOD_SMS
-          - MFA_METHOD_EMAIL
-          - MFA_METHOD_RECOVERY_CODE
+          - totp
+          - sms
+          - email
+          - recovery_code
           type: string
-          format: enum
+          description: MFA method type
         hint:
           type: string
           description: Masked hint (e.g., "***-***-1234" for SMS, "john***@gm***.com" for email)
@@ -1316,15 +2266,15 @@ components:
       properties:
         method:
           enum:
-          - MFA_METHOD_UNSPECIFIED
-          - MFA_METHOD_TOTP
-          - MFA_METHOD_SMS
-          - MFA_METHOD_EMAIL
-          - MFA_METHOD_RECOVERY_CODE
+          - totp
+          - sms
+          - email
+          - recovery_code
           type: string
-          format: enum
+          description: MFA method type
         enabled:
           type: boolean
+          description: Whether this method is currently active
         hint:
           type: string
           description: Masked hint for this method
@@ -1332,14 +2282,17 @@ components:
           type: string
           description: When this method was configured
           format: date-time
+          readOnly: true
       description: Status of a configured MFA method
     auth.v1.MfaSetupError:
       type: object
       properties:
         message:
           type: string
+          description: Human-readable error message
         code:
           type: string
+          description: Machine-readable error code
     auth.v1.MfaSetupSuccess:
       type: object
       properties:
@@ -1347,326 +2300,35 @@ components:
           type: array
           items:
             type: string
+          description: One-time recovery codes — save securely, each can be used exactly once
       description: Recovery codes (only returned on first MFA enrollment, display once!)
-    auth.v1.RecoveryConfirmRequest:
-      type: object
-      properties:
-        token:
-          type: string
-          description: Recovery token from email/SMS
-        newPassword:
-          type: string
-          description: 'New password (NIST: min 8 chars with MFA, min 15 without)'
-      description: Confirm recovery and set new password
-    auth.v1.RecoveryStartRequest:
-      type: object
-      properties:
-        identifier:
-          type: string
-          description: Email or phone number (used to look up account)
-        identifierType:
-          enum:
-          - IDENTIFIER_TYPE_UNSPECIFIED
-          - IDENTIFIER_TYPE_EMAIL
-          - IDENTIFIER_TYPE_PHONE
-          type: string
-          description: Identifier type (email or phone)
-          format: enum
-        idempotencyKey:
-          type: string
-          description: "Client-generated idempotency key (UUID v4 recommended).\r\n Prevents duplicate recovery emails on network retries."
-      description: "Start account recovery (password reset)\r\n Always returns success to prevent user enumeration (OWASP)"
-    auth.v1.RefreshTokensRequest:
-      type: object
-      properties:
-        refreshToken:
-          type: string
-    auth.v1.RequestVerificationRequest:
-      type: object
-      properties:
-        type:
-          enum:
-          - VERIFICATION_TYPE_UNSPECIFIED
-          - VERIFICATION_TYPE_EMAIL
-          - VERIFICATION_TYPE_PHONE
-          type: string
-          description: Type of verification
-          format: enum
-    auth.v1.RevokeOtherSessionsRequest:
-      type: object
-      properties: {}
-    auth.v1.RevokeSessionsResponse:
-      type: object
-      properties:
-        revokedCount:
-          type: integer
-          description: Number of sessions revoked
-          format: int32
-      description: Response for revoking multiple sessions
-    auth.v1.SessionInfo:
-      type: object
-      properties:
-        deviceId:
-          type: string
-          description: Unique device identifier
-        deviceName:
-          type: string
-          description: Human-readable device name
-        deviceType:
-          type: string
-          description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
-        clientVersion:
-          type: string
-          description: App version
-        ipAddress:
-          type: string
-          description: Last seen IP address (may be masked for privacy)
-        ipCountry:
-          type: string
-          description: ISO 3166-1 alpha-2 country code
-        createdAt:
-          type: string
-          description: Session creation timestamp
-          format: date-time
-        lastSeenAt:
-          type: string
-          description: Last activity timestamp
-          format: date-time
-        expiresAt:
-          type: string
-          description: Session expiration timestamp
-          format: date-time
-        isCurrent:
-          type: boolean
-          description: True if this is the current session
-        ipCreatedBy:
-          type: string
-          description: IP address at session creation
-        activityCount:
-          type: integer
-          description: Number of token refreshes (activity indicator)
-          format: int32
-        metadata:
-          type: object
-          additionalProperties:
-            type: string
-          description: Session metadata (user agent, fingerprint, etc.)
-      description: Session information returned to clients
-    auth.v1.SetupMfaRequest:
-      type: object
-      properties:
-        method:
-          enum:
-          - MFA_METHOD_UNSPECIFIED
-          - MFA_METHOD_TOTP
-          - MFA_METHOD_SMS
-          - MFA_METHOD_EMAIL
-          - MFA_METHOD_RECOVERY_CODE
-          type: string
-          description: Method to set up
-          format: enum
-        identifier:
-          type: string
-          description: 'For SMS/Email: the phone/email to use (must be verified)'
-      description: Request to set up MFA
-    auth.v1.SetupMfaResponse:
-      type: object
-      properties:
-        secret:
-          type: string
-          description: 'For TOTP: base32-encoded secret'
-        provisioningUri:
-          type: string
-          description: 'For TOTP: otpauth:// URI for QR code generation'
-        maskedDestination:
-          type: string
-          description: 'For SMS/Email: masked destination where code was sent'
-        setupToken:
-          type: string
-          description: Setup token to correlate with `ConfirmMfaSetup`
-        expiresAt:
-          type: string
-          description: Setup expires at
-          format: date-time
-      description: MFA setup response
-    auth.v1.SignOutRequest:
-      type: object
-      properties: {}
-    auth.v1.SignUpRequest:
-      type: object
-      properties:
-        identifier:
-          type: string
-          description: User identifier (email or phone in E.164 format)
-        identifierType:
-          enum:
-          - IDENTIFIER_TYPE_UNSPECIFIED
-          - IDENTIFIER_TYPE_EMAIL
-          - IDENTIFIER_TYPE_PHONE
-          type: string
-          description: Type of identifier (auto-detected if not specified based on format)
-          format: enum
-        password:
-          type: string
-          description: Password
-        displayName:
-          type: string
-          description: Display name
-        installationId:
-          allOf:
-          - $ref: '#/components/schemas/core.v1.UUID'
-          description: Unique installation/app instance ID
-        clientInfo:
-          allOf:
-          - $ref: '#/components/schemas/auth.v1.ClientInfo'
-          description: Client/device information for session (stored in sessions table)
-        locale:
-          type: string
-          description: Locale (BCP 47, e.g., `en-US`)
-        timezone:
-          type: string
-          description: Timezone (IANA, e.g., `America/New_York`)
-        idempotencyKey:
-          type: string
-          description: "Client-generated idempotency key (UUID v4 recommended).\r\n Guarantees at-most-once execution for retries on network failures.\r\n Server ignores the request body if a matching key was already processed\r\n and returns the original response."
-      description: Register a new user account
-    auth.v1.TokenPair:
-      type: object
-      properties:
-        accessToken:
-          type: string
-        refreshToken:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
-    auth.v1.UserSnapshot:
-      type: object
-      properties:
-        userId:
-          $ref: '#/components/schemas/core.v1.UUID'
-        displayName:
-          type: string
-        email:
-          type: string
-        phone:
-          type: string
-        role:
-          enum:
-          - USER_ROLE_UNSPECIFIED
-          - USER_ROLE_ADMIN
-          - USER_ROLE_USER
-          - USER_ROLE_GUEST
-          type: string
-          format: enum
-        status:
-          enum:
-          - USER_STATUS_UNSPECIFIED
-          - USER_STATUS_PENDING
-          - USER_STATUS_ACTIVE
-          - USER_STATUS_SUSPENDED
-          - USER_STATUS_DELETED
-          type: string
-          format: enum
-        emailVerified:
-          type: boolean
-        phoneVerified:
-          type: boolean
-        mfaEnabled:
-          type: boolean
-        linkedProviders:
-          type: array
-          items:
-            enum:
-            - OAUTH_PROVIDER_UNSPECIFIED
-            - OAUTH_PROVIDER_GOOGLE
-            - OAUTH_PROVIDER_GITHUB
-            - OAUTH_PROVIDER_MICROSOFT
-            - OAUTH_PROVIDER_APPLE
-            - OAUTH_PROVIDER_FACEBOOK
-            type: string
-            format: enum
-        avatarUrl:
-          type: string
-        hasPassword:
-          type: boolean
-      description: Info returned on successful auth
     auth.v1.ValidateCredentialsResponse:
       type: object
       properties:
         valid:
           type: boolean
+          description: Whether the current session credentials are valid
         user:
-          $ref: '#/components/schemas/auth.v1.UserSnapshot'
-    auth.v1.VerifyMfaRequest:
-      type: object
-      properties:
-        challengeToken:
-          type: string
-          description: Challenge token from MfaChallenge
-        method:
-          enum:
-          - MFA_METHOD_UNSPECIFIED
-          - MFA_METHOD_TOTP
-          - MFA_METHOD_SMS
-          - MFA_METHOD_EMAIL
-          - MFA_METHOD_RECOVERY_CODE
-          type: string
-          description: Method used for verification
-          format: enum
-        code:
-          type: string
-          description: Verification code (6-digit TOTP, SMS code, recovery code, etc.)
-        clientInfo:
           allOf:
-          - $ref: '#/components/schemas/auth.v1.ClientInfo'
-          description: Client info for session creation
-      description: Verify MFA code to complete authentication
-    core.v1.UUID:
-      type: object
-      properties:
-        value:
-          type: string
-      description: UUID with format validation
-    google.protobuf.Any:
-      type: object
-      properties:
-        '@type':
-          type: string
-          description: The type of the serialized message.
-      additionalProperties: true
-      description: Contains an arbitrary serialized message along with a @type that describes the type of the serialized message.
-    google.rpc.Status:
-      type: object
-      properties:
-        code:
-          type: integer
-          description: The status code, which should be an enum value of [google.rpc.Code][google.rpc.Code].
-          format: int32
-        message:
-          type: string
-          description: A developer-facing error message, which should be in English. Any user-facing error message should be localized and sent in the [google.rpc.Status.details][google.rpc.Status.details] field, or localized by the client.
-        details:
-          type: array
-          items:
-            $ref: '#/components/schemas/google.protobuf.Any'
-          description: A list of messages that carry the error details.  There is a common set of message types for APIs to use.
-      description: 'The `Status` type defines a logical error model that is suitable for different programming environments, including REST APIs and RPC APIs. It is used by [gRPC](https://github.com/grpc). Each `Status` message contains three pieces of data: error code, error message, and error details. You can find out more about this error model and how to work with it in the [API Design Guide](https://cloud.google.com/apis/design/errors).'
-    operations.v1.CheckResult:
+          - $ref: '#/components/schemas/auth.v1.UserSnapshot'
+          description: Authenticated user info (populated when valid is true)
+    operations.v1.HealthResponse:
       type: object
       properties:
         status:
           enum:
-          - unspecified
           - healthy
           - unhealthy
           type: string
-          description: Component health.
-          format: enum
-        message:
+          description: Overall service health.
+        version:
           type: string
-          description: Error detail — present only when status is HEALTH_STATUS_UNHEALTHY.
-      description: Individual dependency check result.
+          description: Service version from Cargo.toml (e.g. "0.1.0").
+        checks:
+          allOf:
+          - $ref: '#/components/schemas/operations.v1.HealthChecks'
+          description: Dependency health checks.
+      description: Readiness check response with component health.
     operations.v1.HealthChecks:
       type: object
       properties:
@@ -1677,242 +2339,25 @@ components:
         storage:
           allOf:
           - $ref: '#/components/schemas/operations.v1.CheckResult'
-          description: "S3 storage connectivity check.\r\n Omitted from JSON when S3 is not configured."
+          description: |-
+            S3 storage connectivity check.
+             Omitted from JSON when S3 is not configured.
       description: Component health check results.
-    operations.v1.HealthResponse:
-      type: object
-      properties:
-        status:
-          enum:
-          - unspecified
-          - healthy
-          - unhealthy
-          type: string
-          description: Overall service health.
-          format: enum
-        version:
-          type: string
-          description: Service version from Cargo.toml (e.g. "0.1.0").
-        checks:
-          allOf:
-          - $ref: '#/components/schemas/operations.v1.HealthChecks'
-          description: Dependency health checks.
-      description: Readiness check response with component health.
-    operations.v1.LivenessCheckResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          description: Always "OK" when the process is alive.
-      description: Liveness check response.
-    operations.v1.MetricsResponse:
-      type: object
-      properties:
-        metrics:
-          type: string
-          description: Prometheus-formatted metrics text.
-      description: "Metrics response.\r\n\r\n Body is Prometheus text exposition format, served as text/plain."
-    operations.v1.VerifyEmailResponse:
-      type: object
-      properties:
-        redirectUrl:
-          type: string
-          description: Redirect URL (success or error page).
-      description: "Email verification response.\r\n\r\n The actual HTTP response is a 302 redirect to the frontend\r\n success or error page — this message documents the redirect target."
-    users.v1.ConfirmAvatarUploadRequest:
-      type: object
-      properties:
-        userId:
-          $ref: '#/components/schemas/core.v1.UUID'
-      description: Confirm avatar upload completed
-    users.v1.CreateUserRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          description: Display name
-        email:
-          type: string
-          description: Email (optional if phone is provided)
-        phone:
-          type: string
-          description: Phone in E.164 format (optional if email is provided)
-        password:
-          type: string
-          description: Password (optional for OAuth-only accounts)
-        role:
-          enum:
-          - USER_ROLE_UNSPECIFIED
-          - USER_ROLE_ADMIN
-          - USER_ROLE_USER
-          - USER_ROLE_GUEST
-          type: string
-          description: User role
-          format: enum
-        locale:
-          type: string
-          description: Locale (BCP 47)
-        timezone:
-          type: string
-          description: Timezone (IANA)
-    users.v1.GetAvatarUploadUrlRequest:
-      type: object
-      properties:
-        userId:
-          $ref: '#/components/schemas/core.v1.UUID'
-        contentType:
-          type: string
-        contentSize:
-          type: string
-      description: Request for presigned upload URL
-    users.v1.GetAvatarUploadUrlResponse:
-      type: object
-      properties:
-        uploadUrl:
-          type: string
-          description: Presigned PUT URL for S3
-        expiresIn:
-          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
-          type: string
-          description: URL expiration in seconds
-      description: Response with presigned URL for direct S3 upload
-    users.v1.SetPasswordRequest:
-      type: object
-      properties:
-        userId:
-          $ref: '#/components/schemas/core.v1.UUID'
-        password:
-          type: string
-    users.v1.UpdateUserRequest:
-      type: object
-      properties:
-        userId:
-          $ref: '#/components/schemas/core.v1.UUID'
-        updateMask:
-          type: string
-          format: field-mask
-        name:
-          type: string
-        email:
-          type: string
-        phone:
-          type: string
-        role:
-          enum:
-          - USER_ROLE_UNSPECIFIED
-          - USER_ROLE_ADMIN
-          - USER_ROLE_USER
-          - USER_ROLE_GUEST
-          type: string
-          format: enum
-        status:
-          enum:
-          - USER_STATUS_UNSPECIFIED
-          - USER_STATUS_PENDING
-          - USER_STATUS_ACTIVE
-          - USER_STATUS_SUSPENDED
-          - USER_STATUS_DELETED
-          type: string
-          format: enum
-        locale:
-          type: string
-        timezone:
-          type: string
-    users.v1.User:
-      type: object
-      properties:
-        id:
-          $ref: '#/components/schemas/core.v1.UUID'
-        name:
-          type: string
-        email:
-          type: string
-        phone:
-          type: string
-        role:
-          enum:
-          - USER_ROLE_UNSPECIFIED
-          - USER_ROLE_ADMIN
-          - USER_ROLE_USER
-          - USER_ROLE_GUEST
-          type: string
-          format: enum
-        status:
-          enum:
-          - USER_STATUS_UNSPECIFIED
-          - USER_STATUS_PENDING
-          - USER_STATUS_ACTIVE
-          - USER_STATUS_SUSPENDED
-          - USER_STATUS_DELETED
-          type: string
-          format: enum
-        emailVerified:
-          type: boolean
-        phoneVerified:
-          type: boolean
-        mfaEnabled:
-          type: boolean
-        hasPassword:
-          type: boolean
-        avatarUrl:
-          type: string
-          description: "Linked OAuth providers\r\n repeated OAuthProvider linked_providers = 11;"
-        locale:
-          type: string
-        timezone:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-    users.v1.UserInfo:
-      type: object
-      properties:
-        id:
-          $ref: '#/components/schemas/core.v1.UUID'
-        name:
-          type: string
-        email:
-          type: string
-        phone:
-          type: string
-        role:
-          enum:
-          - USER_ROLE_UNSPECIFIED
-          - USER_ROLE_ADMIN
-          - USER_ROLE_USER
-          - USER_ROLE_GUEST
-          type: string
-          format: enum
-        status:
-          enum:
-          - USER_STATUS_UNSPECIFIED
-          - USER_STATUS_PENDING
-          - USER_STATUS_ACTIVE
-          - USER_STATUS_SUSPENDED
-          - USER_STATUS_DELETED
-          type: string
-          format: enum
-        avatarUrl:
-          type: string
-        locale:
-          type: string
-        timezone:
-          type: string
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Access token from Authenticate or RefreshTokens
+      description: Bearer authentication token
 tags:
 - name: AuthService
-  description: "=============================================================================\r\n Auth Service - Authentication, MFA, OAuth, Sessions\r\n =============================================================================\r\n\r\n OWASP Authentication Cheat Sheet compliance:\r\n - Multi-identifier (email, phone)\r\n - MFA support (blocks 99.9% of automated attacks)\r\n - OAuth 2.0 with PKCE\r\n - Account lockout (brute-force protection)\r\n - Generic error messages (prevent enumeration)\r\n - Password change requires current password\r\n\r\n Core flows:\r\n   Registration: SignUp → (optional) ConfirmVerification → Active account\r\n   Login:        Authenticate → (if MFA) VerifyMfa → Tokens issued\r\n   Password:     ChangePassword (has password) | RecoveryStart/Confirm\r\n   (forgot/none)\r\n\r\n Expansion points:\r\n - Passkeys/WebAuthn: Add MFA_METHOD_PASSKEY\r\n - Magic links: Add RequestMagicLink, VerifyMagicLink\r\n - Trusted devices: TrustDevice, Skip MFA on known devices\r\n - Audit logging: Add audit metadata fields\r\n - Rate limiting hints: Return retry-after in responses\r\n ============================================================================="
+  description: Auth Service - Authentication, MFA, OAuth, Sessions
 - name: OperationsService
-  description: "=============================================================================\r\n Operations Service — REST-only contract for OpenAPI generation\r\n =============================================================================\r\n\r\n ⚠️  NOT a callable gRPC service. This proto exists solely to produce a\r\n unified OpenAPI 3.1 spec alongside auth and user services.\r\n\r\n These endpoints (health probes, email verification, metrics) are\r\n infrastructure-level concerns implemented directly in Axum (see\r\n src/routes.rs). Defining them in proto keeps the REST API contract\r\n in the same source-of-truth as the gRPC API.\r\n\r\n gRPC reflection intentionally excludes this service.\r\n ============================================================================="
+  description: Operations Service — REST-only contract for OpenAPI generation
 - name: UserService
   description: User Service - User CRUD, avatars, admin functions
+servers:
+- url: http://localhost:50051
+  description: Local development
 security:
 - bearerAuth: []

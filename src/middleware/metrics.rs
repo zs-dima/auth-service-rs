@@ -122,19 +122,12 @@ where
                     .headers()
                     .get("grpc-status")
                     .and_then(|v| v.to_str().ok())
-                    .map_or_else(
-                        || response.status().as_u16().to_string(),
-                        str::to_string,
-                    )
+                    .map_or_else(|| response.status().as_u16().to_string(), str::to_string)
             } else {
                 response.status().as_u16().to_string()
             };
 
-            let labels = [
-                ("method", method),
-                ("path", path),
-                ("status", status),
-            ];
+            let labels = [("method", method), ("path", path), ("status", status)];
 
             metrics::counter!("http_requests_total", &labels).increment(1);
             metrics::histogram!("http_request_duration_seconds", &labels).record(duration);
@@ -173,7 +166,10 @@ mod tests {
 
     #[test]
     fn unknown_rest_paths_bucketed() {
-        assert_eq!(normalize_rest_path("/v1/auth/sessions/device-abc-123"), "/*");
+        assert_eq!(
+            normalize_rest_path("/v1/auth/sessions/device-abc-123"),
+            "/*"
+        );
         assert_eq!(normalize_rest_path("/unknown/route"), "/*");
         assert_eq!(normalize_rest_path("/verify-email?token=abc"), "/*");
     }
@@ -182,6 +178,9 @@ mod tests {
     fn swagger_paths_normalized() {
         assert_eq!(normalize_rest_path("/swagger-ui"), "/swagger-ui");
         assert_eq!(normalize_rest_path("/swagger-ui/index.html"), "/swagger-ui");
-        assert_eq!(normalize_rest_path("/swagger-ui/swagger-ui.css"), "/swagger-ui");
+        assert_eq!(
+            normalize_rest_path("/swagger-ui/swagger-ui.css"),
+            "/swagger-ui"
+        );
     }
 }

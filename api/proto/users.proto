@@ -111,34 +111,57 @@ service UserService {
 // =============================================================================
 
 message UserInfo {
-  core.v1.UUID       id         = 1;
-  string             name       = 2;
-  string             email      = 3;
-  string             phone      = 4;
-  core.v1.UserRole   role       = 5;
-  core.v1.UserStatus status     = 6;
-  string             avatar_url = 7;
-  string             locale     = 8;
-  string             timezone   = 9;
+  // User's unique identifier
+  core.v1.UUID id = 1;
+  // Display name
+  string name = 2;
+  // Email address
+  string email = 3;
+  // Phone number (E.164 format)
+  string phone = 4;
+  // Authorization role
+  core.v1.UserRole role = 5;
+  // Account status
+  core.v1.UserStatus status = 6;
+  // Avatar image URL
+  string avatar_url = 7;
+  // Locale (BCP 47, e.g., `en-US`)
+  string locale = 8;
+  // Timezone (IANA, e.g., `America/New_York`)
+  string timezone = 9;
 }
 
 message User {
-  core.v1.UUID       id             = 1;
-  string             name           = 2;
-  string             email          = 3;
-  string             phone          = 4;
-  core.v1.UserRole   role           = 5;
-  core.v1.UserStatus status         = 6;
-  bool               email_verified = 7;
-  bool               phone_verified = 8;
-  bool               mfa_enabled    = 9;
-  bool               has_password   = 10;
-  // Linked OAuth providers
-  // repeated OAuthProvider linked_providers = 11;
-  string                    avatar_url = 11;
-  string                    locale     = 12;
-  string                    timezone   = 13;
+  // User's unique identifier
+  core.v1.UUID id = 1;
+  // Display name
+  string name = 2;
+  // Email address
+  string email = 3;
+  // Phone number (E.164 format)
+  string phone = 4;
+  // Authorization role
+  core.v1.UserRole role = 5;
+  // Account status
+  core.v1.UserStatus status = 6;
+  // Whether the email address has been verified
+  bool email_verified = 7;
+  // Whether the phone number has been verified
+  bool phone_verified = 8;
+  // Whether MFA is enabled for this account
+  bool mfa_enabled = 9;
+  // Whether the user has a password set (false for OAuth-only accounts)
+  bool has_password = 10;
+
+  // Avatar image URL
+  string avatar_url = 11;
+  // Locale (BCP 47, e.g., `en-US`)
+  string locale = 12;
+  // Timezone (IANA, e.g., `America/New_York`)
+  string timezone = 13;
+  // Account creation timestamp
   google.protobuf.Timestamp created_at = 14;
+  // Last profile update timestamp
   google.protobuf.Timestamp updated_at = 15;
 }
 
@@ -151,12 +174,17 @@ message ListUsersRequest {
   core.v1.UUID user_id = 1;
 
   // Optional: filter by specific user IDs; if empty, load all users
-  repeated core.v1.UUID       user_ids   = 2;
-  repeated core.v1.UserStatus statuses   = 3;
-  repeated core.v1.UserRole   roles      = 4;
-  string                      query      = 5 [ (validate.rules).string.max_len = 255 ];
-  int32                       page_size  = 6 [ (validate.rules).int32 = {gte : 0, lte : 1000} ];
-  string                      page_token = 7;
+  repeated core.v1.UUID user_ids = 2;
+  // Filter by account statuses
+  repeated core.v1.UserStatus statuses = 3;
+  // Filter by roles
+  repeated core.v1.UserRole roles = 4;
+  // Free-text search query (name, email, phone)
+  string query = 5 [ (validate.rules).string.max_len = 255 ];
+  // Maximum number of results per page (0 = server default)
+  int32 page_size = 6 [ (validate.rules).int32 = {gte : 0, lte : 1000} ];
+  // Pagination cursor from a previous response
+  string page_token = 7;
 }
 
 // =============================================================================
@@ -181,20 +209,30 @@ message CreateUserRequest {
 }
 
 message UpdateUserRequest {
-  core.v1.UUID                user_id     = 1 [ (validate.rules).message.required = true ];
-  google.protobuf.FieldMask   update_mask = 2;
-  optional string             name        = 3 [ (validate.rules).string.max_len = 255 ];
-  optional string             email       = 4 [ (validate.rules).string.max_len = 254 ];
-  optional string             phone       = 5 [ (validate.rules).string.max_len = 16 ];
-  optional core.v1.UserRole   role        = 6;
-  optional core.v1.UserStatus status      = 7; // Account status (admin only)
-  optional string             locale      = 8 [ (validate.rules).string.max_len = 35 ];
-  optional string             timezone    = 9 [ (validate.rules).string.max_len = 64 ];
+  // Target user ID
+  core.v1.UUID user_id = 1 [ (validate.rules).message.required = true ];
+  // Fields to update (if empty, all provided fields are applied)
+  google.protobuf.FieldMask update_mask = 2;
+  // Display name
+  optional string name = 3 [ (validate.rules).string.max_len = 255 ];
+  // Email address
+  optional string email = 4 [ (validate.rules).string.max_len = 254 ];
+  // Phone number (E.164 format)
+  optional string phone = 5 [ (validate.rules).string.max_len = 16 ];
+  // Authorization role (admin only)
+  optional core.v1.UserRole role = 6;
+  // Account status (admin only)
+  optional core.v1.UserStatus status = 7;
+  // Locale (BCP 47)
+  optional string locale = 8 [ (validate.rules).string.max_len = 35 ];
+  // Timezone (IANA)
+  optional string timezone = 9 [ (validate.rules).string.max_len = 64 ];
 }
 
 message SetPasswordRequest {
-  core.v1.UUID user_id  = 1 [ (validate.rules).message.required = true ];
-  string       password = 2
+  core.v1.UUID user_id = 1 [ (validate.rules).message.required = true ];
+  // New password (NIST: min 8 chars, checked against breach databases)
+  string password = 2
   [ (validate.rules).string = {min_len : 8, max_len : 128} ];
 }
 
@@ -204,10 +242,12 @@ message SetPasswordRequest {
 
 // Request for presigned upload URL
 message GetAvatarUploadUrlRequest {
-  core.v1.UUID user_id      = 1 [ (validate.rules).message.required = true ];
+  core.v1.UUID user_id = 1 [ (validate.rules).message.required = true ];
+  // MIME type of the image to upload
   string content_type = 2 [
     (validate.rules).string = {in : [ "image/jpeg", "image/png", "image/webp" ]}
   ];
+  // File size in bytes (1 byte to 10 MB)
   uint64 content_size = 3
   [ (validate.rules).uint64 = {gt : 0, lte : 10485760} ];
 }

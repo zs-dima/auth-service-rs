@@ -1,0 +1,76 @@
+# OpenAPI generation config for tonic-rest-openapi CLI.
+#
+# Used by `make openapi` to configure the patch pipeline.
+# All fields are optional — defaults are applied by the tool.
+
+# $ref path for the REST error response schema injected into error responses.
+error_schema_ref: "#/components/schemas/rest.v1.ErrorResponse"
+
+# Proto method short names for endpoints returning UNIMPLEMENTED at runtime.
+# These operations are marked as deprecated with a 501 response in the spec.
+unimplemented_methods:
+  # OAuth (not yet implemented)
+  - GetOAuthUrl
+  - ExchangeOAuthCode
+  - LinkOAuthProvider
+  - UnlinkOAuthProvider
+  - ListLinkedProviders
+  # MFA (not yet implemented)
+  - VerifyMfa
+  - GetMfaStatus
+  - SetupMfa
+  - ConfirmMfaSetup
+  - DisableMfa
+
+# Proto method short names for public (no-auth) endpoints.
+# These operations omit the Bearer auth security requirement.
+public_methods:
+  # Auth
+  - Authenticate
+  - SignUp
+  - RefreshTokens
+  - RecoveryStart
+  - RecoveryConfirm
+  - ConfirmVerification
+  - VerifyMfa
+  # OAuth (public flow: no auth needed to start/complete OAuth)
+  - GetOAuthUrl
+  - ExchangeOAuthCode
+  # Operations (hand-written Axum routes, not in REST codegen)
+  - ReadinessCheck
+  - LivenessCheck
+  - VerifyEmail
+  - Metrics
+
+# Endpoints that should use text/plain instead of application/json.
+plain_text_endpoints:
+  - path: /health/live
+    example: "OK"
+  - path: /metrics
+
+# Metrics endpoint path for response header enrichment (Content-Type, Cache-Control).
+metrics_path: /metrics
+
+# Readiness probe path for 503 Service Unavailable response addition.
+readiness_path: /health/ready
+
+# Server entries for the OpenAPI spec `servers` block.
+# If omitted, the tool adds a default `http://localhost:8080` entry.
+servers:
+  - url: http://localhost:50051
+    description: Local development
+
+# OpenAPI `info` block overrides.
+info:
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+# Transform toggles (all default to true if omitted).
+# transforms:
+#   upgrade_to_3_1: true
+#   annotate_sse: true
+#   inject_validation: true
+#   add_security: true
+#   inline_request_bodies: true
+#   flatten_uuid_refs: true
+#   normalize_line_endings: true

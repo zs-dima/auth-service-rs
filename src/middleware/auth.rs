@@ -26,13 +26,14 @@ static PUBLIC_ROUTES: phf::Set<&'static str> = phf_set! {
     "RecoveryConfirm",
     "RefreshTokens",
     "ConfirmVerification",
+    "VerifyMfa",
     // gRPC public methods (OAuth)
     "GetOAuthUrl",
     "ExchangeOAuthCode",
     // gRPC health checks
     "Check",
     "Watch",
-    // REST endpoints
+    // REST infrastructure endpoints
     "/health",
     "/health/live",
     "/health/ready",
@@ -151,6 +152,13 @@ fn is_public_route(path: &str) -> bool {
         return true;
     }
 
+    // Check proto-generated public REST paths (from google.api.http annotations).
+    // These are generated at build time from the proto definitions, eliminating
+    // manual duplication between proto files and auth middleware.
+    if auth_proto::rest::PUBLIC_REST_PATHS.contains(&path) {
+        return true;
+    }
+
     // Swagger UI and OpenAPI spec are only served when the feature is enabled.
     // Prefix match is required because Swagger UI serves assets at sub-paths.
     #[cfg(feature = "swagger")]
@@ -206,11 +214,12 @@ mod tests {
         assert!(is_public_route("/auth.v1.AuthService/RecoveryConfirm"));
         assert!(is_public_route("/auth.v1.AuthService/RefreshTokens"));
         assert!(is_public_route("/auth.v1.AuthService/ConfirmVerification"));
+        assert!(is_public_route("/auth.v1.AuthService/VerifyMfa"));
         assert!(is_public_route("/auth.v1.AuthService/GetOAuthUrl"));
         assert!(is_public_route("/auth.v1.AuthService/ExchangeOAuthCode"));
         assert!(is_public_route("/grpc.health.v1.Health/Check"));
         assert!(is_public_route("/grpc.health.v1.Health/Watch"));
-        // REST endpoints
+        // REST infrastructure endpoints
         assert!(is_public_route("/health"));
         assert!(is_public_route("/health/live"));
         assert!(is_public_route("/health/ready"));
@@ -218,6 +227,16 @@ mod tests {
         assert!(is_public_route("/v1/verify-email"));
         assert!(is_public_route("/metrics"));
         assert!(is_public_route("/"));
+        // REST public endpoints (from generated PUBLIC_REST_PATHS)
+        assert!(is_public_route("/v1/auth/authenticate"));
+        assert!(is_public_route("/v1/auth/signup"));
+        assert!(is_public_route("/v1/auth/token/refresh"));
+        assert!(is_public_route("/v1/auth/recovery/start"));
+        assert!(is_public_route("/v1/auth/recovery/confirm"));
+        assert!(is_public_route("/v1/auth/verification/confirm"));
+        assert!(is_public_route("/v1/auth/mfa/verify"));
+        assert!(is_public_route("/v1/auth/oauth/url"));
+        assert!(is_public_route("/v1/auth/oauth/exchange"));
         // Protected routes
         assert!(!is_public_route("/auth.v1.AuthService/ChangePassword"));
         assert!(!is_public_route("/auth.v1.AuthService/SignOut"));

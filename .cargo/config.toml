@@ -1,5 +1,4 @@
 [alias]
-xtask = "run --package xtask --"
 
 # Workaround for VS2026 LNK1318 PDB size limit error
 # This disables PDB generation in debug builds

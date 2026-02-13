@@ -16,7 +16,7 @@ pub mod error_codes {
     pub const INVALID_TOKEN: &str = "invalid_token";
     pub const EXPIRED_TOKEN: &str = "expired_token";
     pub const ACCOUNT_SUSPENDED: &str = "account_suspended";
-    pub const INTERNAL_ERROR: &str = "internal_error";
+    pub const _INTERNAL_ERROR: &str = "internal_error";
 }
 
 /// Builder for constructing frontend URLs with the configured domain.

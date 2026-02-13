@@ -56,6 +56,7 @@ impl UserService {
     }
 
     /// Streams full user records (admin gets all, user gets self only).
+    #[allow(clippy::needless_pass_by_value)]
     pub(super) fn list_users(
         &self,
         req: ListUsersRequest,
@@ -198,12 +199,10 @@ impl UserService {
 
         // AIP-134: when update_mask is present, only update the listed paths.
         // Mask paths use snake_case from the proto field names.
-        let mask_paths: Option<Vec<&str>> = req.update_mask.as_ref().map(|m| {
-            m.paths
-                .iter()
-                .map(String::as_str)
-                .collect()
-        });
+        let mask_paths: Option<Vec<&str>> = req
+            .update_mask
+            .as_ref()
+            .map(|m| m.paths.iter().map(String::as_str).collect());
 
         let has_path = |path: &str| -> bool {
             match &mask_paths {
