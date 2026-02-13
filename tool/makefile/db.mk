@@ -1,8 +1,8 @@
 .PHONY: db db-prepare migrate db-reset
 
-# Load development environment and construct DATABASE_URL
-# Usage: make db-prepare or make db
-include configs/development.env
+# Load development environment and construct DATABASE_URL (optional;
+# only needed for db-* targets, not required in CI for other targets).
+-include configs/development.env
 export DATABASE_URL := $(subst :@,:$(DB_PASSWORD)@,$(DB_URL))
 
 # SQLx query verification
