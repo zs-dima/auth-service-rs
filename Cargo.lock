@@ -4938,9 +4938,7 @@ dependencies = [
 
 [[package]]
 name = "tonic-rest"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1088775236f89b151ee59a535ee3669d1b74520dea78feecda6298908ed510e"
+version = "0.1.4"
 dependencies = [
  "axum",
  "chrono",
@@ -4954,9 +4952,7 @@ dependencies = [
 
 [[package]]
 name = "tonic-rest-build"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7b81569cd4aa5c45ed784e0bb64aaf02b363888cdd7417590020114f8c5bcbb"
+version = "0.1.4"
 dependencies = [
  "prost",
  "prost-build",
@@ -4967,9 +4963,7 @@ dependencies = [
 
 [[package]]
 name = "tonic-rest-core"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "663da305df6d8549f02c869b2edfcbe581e41a6b33670eedfaf74d279e5b8299"
+version = "0.1.4"
 dependencies = [
  "prost",
 ]

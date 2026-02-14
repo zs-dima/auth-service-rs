@@ -69,11 +69,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
 # Transform toggles (all default to true if omitted).
-# transforms:
-#   upgrade_to_3_1: true
-#   annotate_sse: true
-#   inject_validation: true
-#   add_security: true
-#   inline_request_bodies: true
-#   flatten_uuid_refs: true
-#   normalize_line_endings: true
+transforms:
+  # Keep request body schemas as named $ref in components/schemas,
+  # makes all data models visible in the Swagger Schemas section.
+  inline_request_bodies: false

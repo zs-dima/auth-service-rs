@@ -114,75 +114,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                identifier:
-                  type: string
-                  description: Primary identifier (email or phone)
-                  minLength: 1
-                  maxLength: 254
-                  example: user@example.com
-                identifierType:
-                  enum:
-                  - email
-                  - phone
-                  type: string
-                  description: Type of identifier
-                  example: email
-                password:
-                  type: string
-                  description: 'Password (NIST: min 8 chars, check against breach databases)'
-                  minLength: 1
-                  maxLength: 128
-                  writeOnly: true
-                  example: P@ssw0rd123!
-                installationId:
-                  type: string
-                  format: uuid
-                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-                  example: 550e8400-e29b-41d4-a716-446655440000
-                  description: Installation ID for immediate session
-                clientInfo:
-                  type: object
-                  properties:
-                    deviceId:
-                      type: string
-                      description: Unique device/client identifier
-                      minLength: 1
-                      maxLength: 255
-                      example: string
-                    deviceName:
-                      type: string
-                      description: Human-readable device name
-                      maxLength: 255
-                      example: string
-                    deviceType:
-                      type: string
-                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
-                      maxLength: 50
-                      example: string
-                    clientVersion:
-                      type: string
-                      description: App/client version
-                      maxLength: 100
-                      example: 1.0.0
-                    metadata:
-                      type: object
-                      additionalProperties:
-                        type: string
-                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
-                      example:
-                        key: value
-                  description: Client info for session
-                  required:
-                  - deviceId
-              required:
-              - identifier
-              - password
-              - installationId
-              - clientInfo
+              $ref: '#/components/schemas/auth.v1.AuthenticateRequest'
         required: true
-        description: Unified authentication request supporting multiple identifier types
       responses:
         '200':
           description: OK
@@ -231,29 +164,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                method:
-                  enum:
-                  - totp
-                  - sms
-                  - email
-                  - recovery_code
-                  type: string
-                  description: Method to disable (or all if not specified)
-                  example: totp
-                password:
-                  type: string
-                  description: |-
-                    Current password for verification (OWASP: verify identity for sensitive
-                     ops)
-                  minLength: 1
-                  writeOnly: true
-                  example: P@ssw0rd123!
-              required:
-              - password
+              $ref: '#/components/schemas/auth.v1.DisableMfaRequest'
         required: true
-        description: Disable MFA request
       responses:
         default:
           description: Default error response
@@ -284,26 +196,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                method:
-                  enum:
-                  - totp
-                  - sms
-                  - email
-                  - recovery_code
-                  type: string
-                  description: Method to set up
-                  example: totp
-                identifier:
-                  type: string
-                  description: 'For SMS/Email: the phone/email to use (must be verified)'
-                  maxLength: 254
-                  example: user@example.com
-              required:
-              - method
+              $ref: '#/components/schemas/auth.v1.SetupMfaRequest'
         required: true
-        description: Request to set up MFA
       responses:
         '200':
           description: OK
@@ -338,24 +232,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                setupToken:
-                  type: string
-                  description: Setup token from `SetupMfaReply`
-                  minLength: 1
-                  example: eyJhbGciOiJIUzI1NiIs...
-                code:
-                  type: string
-                  description: Verification code
-                  minLength: 6
-                  maxLength: 8
-                  example: '123456'
-              required:
-              - setupToken
-              - code
+              $ref: '#/components/schemas/auth.v1.ConfirmMfaSetupRequest'
         required: true
-        description: Confirm MFA setup
       responses:
         '200':
           description: OK
@@ -420,68 +298,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                challengeToken:
-                  type: string
-                  description: Challenge token from MfaChallenge
-                  minLength: 1
-                  example: eyJhbGciOiJIUzI1NiIs...
-                method:
-                  enum:
-                  - totp
-                  - sms
-                  - email
-                  - recovery_code
-                  type: string
-                  description: Method used for verification
-                  example: totp
-                code:
-                  type: string
-                  description: Verification code (6-digit TOTP, SMS code, recovery code, etc.)
-                  minLength: 6
-                  maxLength: 32
-                  example: '123456'
-                clientInfo:
-                  type: object
-                  properties:
-                    deviceId:
-                      type: string
-                      description: Unique device/client identifier
-                      minLength: 1
-                      maxLength: 255
-                      example: string
-                    deviceName:
-                      type: string
-                      description: Human-readable device name
-                      maxLength: 255
-                      example: string
-                    deviceType:
-                      type: string
-                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
-                      maxLength: 50
-                      example: string
-                    clientVersion:
-                      type: string
-                      description: App/client version
-                      maxLength: 100
-                      example: 1.0.0
-                    metadata:
-                      type: object
-                      additionalProperties:
-                        type: string
-                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
-                      example:
-                        key: value
-                  description: Client info for session creation
-                  required:
-                  - deviceId
-              required:
-              - challengeToken
-              - method
-              - code
+              $ref: '#/components/schemas/auth.v1.VerifyMfaRequest'
         required: true
-        description: Verify MFA code to complete authentication
       responses:
         '200':
           description: OK
@@ -517,65 +335,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code:
-                  type: string
-                  description: Authorization code from OAuth callback
-                  minLength: 1
-                  example: '123456'
-                state:
-                  type: string
-                  description: State parameter from callback
-                  minLength: 1
-                  example: string
-                installationId:
-                  type: string
-                  format: uuid
-                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-                  example: 550e8400-e29b-41d4-a716-446655440000
-                  description: Installation ID
-                clientInfo:
-                  type: object
-                  properties:
-                    deviceId:
-                      type: string
-                      description: Unique device/client identifier
-                      minLength: 1
-                      maxLength: 255
-                      example: string
-                    deviceName:
-                      type: string
-                      description: Human-readable device name
-                      maxLength: 255
-                      example: string
-                    deviceType:
-                      type: string
-                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
-                      maxLength: 50
-                      example: string
-                    clientVersion:
-                      type: string
-                      description: App/client version
-                      maxLength: 100
-                      example: 1.0.0
-                    metadata:
-                      type: object
-                      additionalProperties:
-                        type: string
-                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
-                      example:
-                        key: value
-                  description: Client info
-                  required:
-                  - deviceId
-              required:
-              - code
-              - state
-              - installationId
-              - clientInfo
+              $ref: '#/components/schemas/auth.v1.ExchangeOAuthCodeRequest'
         required: true
-        description: Exchange OAuth authorization code
       responses:
         '200':
           description: OK
@@ -611,23 +372,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code:
-                  type: string
-                  description: Authorization code from OAuth callback
-                  minLength: 1
-                  example: '123456'
-                state:
-                  type: string
-                  description: State parameter
-                  minLength: 1
-                  example: string
-              required:
-              - code
-              - state
+              $ref: '#/components/schemas/auth.v1.LinkOAuthProviderRequest'
         required: true
-        description: Link OAuth provider to existing account
       responses:
         default:
           description: Default error response
@@ -726,39 +472,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                provider:
-                  enum:
-                  - google
-                  - github
-                  - microsoft
-                  - apple
-                  - facebook
-                  type: string
-                  description: OAuth provider
-                  example: google
-                redirectUri:
-                  type: string
-                  description: 'Optional: redirect URI override'
-                  maxLength: 2048
-                  example: https://example.com
-                scopes:
-                  type: array
-                  items:
-                    type: string
-                  description: 'Optional: additional scopes'
-                  example:
-                  - string
-                stateData:
-                  type: string
-                  description: 'Optional: state data to preserve across OAuth flow'
-                  maxLength: 1024
-                  example: string
-              required:
-              - provider
+              $ref: '#/components/schemas/auth.v1.GetOAuthUrlRequest'
         required: true
-        description: Get OAuth authorization URL
       responses:
         '200':
           description: OK
@@ -794,26 +509,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                currentPassword:
-                  type: string
-                  description: Current password for verification
-                  minLength: 1
-                  writeOnly: true
-                  example: P@ssw0rd123!
-                newPassword:
-                  type: string
-                  description: New password
-                  minLength: 8
-                  maxLength: 128
-                  writeOnly: true
-                  example: N3wP@ssw0rd!456
-              required:
-              - currentPassword
-              - newPassword
+              $ref: '#/components/schemas/auth.v1.ChangePasswordRequest'
         required: true
-        description: Change password (requires current password)
       responses:
         default:
           description: Default error response
@@ -834,25 +531,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                token:
-                  type: string
-                  description: Recovery token from email/SMS
-                  minLength: 1
-                  example: eyJhbGciOiJIUzI1NiIs...
-                newPassword:
-                  type: string
-                  description: 'New password (NIST: min 8 chars with MFA, min 15 without)'
-                  minLength: 8
-                  maxLength: 128
-                  writeOnly: true
-                  example: N3wP@ssw0rd!456
-              required:
-              - token
-              - newPassword
+              $ref: '#/components/schemas/auth.v1.RecoveryConfirmRequest'
         required: true
-        description: Confirm recovery and set new password
       responses:
         default:
           description: Default error response
@@ -876,34 +556,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                identifier:
-                  type: string
-                  description: Email or phone number (used to look up account)
-                  minLength: 1
-                  maxLength: 254
-                  example: user@example.com
-                identifierType:
-                  enum:
-                  - email
-                  - phone
-                  type: string
-                  description: Identifier type (email or phone)
-                  example: email
-                idempotencyKey:
-                  type: string
-                  description: |-
-                    Client-generated idempotency key (UUID v4 recommended).
-                     Prevents duplicate recovery emails on network retries.
-                  maxLength: 64
-                  example: 550e8400-e29b-41d4-a716-446655440000
-              required:
-              - identifier
+              $ref: '#/components/schemas/auth.v1.RecoveryStartRequest'
         required: true
-        description: |-
-          Start account recovery (password reset)
-           Always returns success to prevent user enumeration (OWASP)
       responses:
         default:
           description: Default error response
@@ -927,17 +581,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                refreshToken:
-                  type: string
-                  description: Active refresh token used to identify the current session
-                  minLength: 1
-                  example: eyJhbGciOiJIUzI1NiIs...
-              required:
-              - refreshToken
+              $ref: '#/components/schemas/auth.v1.ListSessionsRequest'
         required: true
-        description: Request to list active sessions.
       responses:
         '200':
           description: OK
@@ -1024,101 +669,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                identifier:
-                  type: string
-                  description: User identifier (email or phone in E.164 format)
-                  minLength: 1
-                  maxLength: 254
-                  example: user@example.com
-                identifierType:
-                  enum:
-                  - email
-                  - phone
-                  type: string
-                  description: Type of identifier (auto-detected if not specified based on format)
-                  example: email
-                password:
-                  type: string
-                  description: Password
-                  minLength: 8
-                  maxLength: 128
-                  writeOnly: true
-                  example: P@ssw0rd123!
-                displayName:
-                  type: string
-                  description: Display name
-                  minLength: 1
-                  maxLength: 255
-                  example: John Doe
-                installationId:
-                  type: string
-                  format: uuid
-                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-                  example: 550e8400-e29b-41d4-a716-446655440000
-                  description: Unique installation/app instance ID
-                clientInfo:
-                  type: object
-                  properties:
-                    deviceId:
-                      type: string
-                      description: Unique device/client identifier
-                      minLength: 1
-                      maxLength: 255
-                      example: string
-                    deviceName:
-                      type: string
-                      description: Human-readable device name
-                      maxLength: 255
-                      example: string
-                    deviceType:
-                      type: string
-                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
-                      maxLength: 50
-                      example: string
-                    clientVersion:
-                      type: string
-                      description: App/client version
-                      maxLength: 100
-                      example: 1.0.0
-                    metadata:
-                      type: object
-                      additionalProperties:
-                        type: string
-                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
-                      example:
-                        key: value
-                  description: Client/device information for session (stored in sessions table)
-                  required:
-                  - deviceId
-                locale:
-                  type: string
-                  description: Locale (BCP 47, e.g., `en-US`)
-                  maxLength: 35
-                  example: en-US
-                timezone:
-                  type: string
-                  description: Timezone (IANA, e.g., `America/New_York`)
-                  maxLength: 64
-                  example: America/New_York
-                idempotencyKey:
-                  type: string
-                  description: |-
-                    Client-generated idempotency key (UUID v4 recommended).
-                     Guarantees at-most-once execution for retries on network failures.
-                     Server ignores the request body if a matching key was already processed
-                     and returns the original response.
-                  maxLength: 64
-                  example: 550e8400-e29b-41d4-a716-446655440000
-              required:
-              - identifier
-              - password
-              - displayName
-              - installationId
-              - clientInfo
+              $ref: '#/components/schemas/auth.v1.SignUpRequest'
         required: true
-        description: Register a new user account
       responses:
         default:
           description: Default error response
@@ -1144,15 +696,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                refreshToken:
-                  type: string
-                  description: Refresh token to exchange for a new token pair
-                  minLength: 1
-                  example: eyJhbGciOiJIUzI1NiIs...
-              required:
-              - refreshToken
+              $ref: '#/components/schemas/auth.v1.RefreshTokensRequest'
         required: true
       responses:
         '200':
@@ -1179,65 +723,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                token:
-                  type: string
-                  description: Verification token from email/SMS
-                  minLength: 1
-                  example: eyJhbGciOiJIUzI1NiIs...
-                type:
-                  enum:
-                  - email
-                  - phone
-                  type: string
-                  description: Type of verification
-                  example: email
-                installationId:
-                  type: string
-                  format: uuid
-                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-                  example: 550e8400-e29b-41d4-a716-446655440000
-                  description: Installation ID for session creation
-                clientInfo:
-                  type: object
-                  properties:
-                    deviceId:
-                      type: string
-                      description: Unique device/client identifier
-                      minLength: 1
-                      maxLength: 255
-                      example: string
-                    deviceName:
-                      type: string
-                      description: Human-readable device name
-                      maxLength: 255
-                      example: string
-                    deviceType:
-                      type: string
-                      description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
-                      maxLength: 50
-                      example: string
-                    clientVersion:
-                      type: string
-                      description: App/client version
-                      maxLength: 100
-                      example: 1.0.0
-                    metadata:
-                      type: object
-                      additionalProperties:
-                        type: string
-                      description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
-                      example:
-                        key: value
-                  description: Client info for session (enables auto-login after verification)
-                  required:
-                  - deviceId
-              required:
-              - token
-              - type
-              - installationId
-              - clientInfo
+              $ref: '#/components/schemas/auth.v1.ConfirmVerificationRequest'
         required: true
       responses:
         '200':
@@ -1264,17 +750,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                type:
-                  enum:
-                  - email
-                  - phone
-                  type: string
-                  description: Type of verification
-                  example: email
-              required:
-              - type
+              $ref: '#/components/schemas/auth.v1.RequestVerificationRequest'
         required: true
       responses:
         default:
@@ -1381,50 +857,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                  description: Display name
-                  minLength: 1
-                  maxLength: 255
-                  example: John Doe
-                email:
-                  type: string
-                  description: Email (optional if phone is provided)
-                  maxLength: 254
-                  example: user@example.com
-                phone:
-                  type: string
-                  description: Phone in E.164 format (optional if email is provided)
-                  maxLength: 16
-                  example: '+1234567890'
-                password:
-                  type: string
-                  description: Password (optional for OAuth-only accounts)
-                  maxLength: 128
-                  writeOnly: true
-                  example: P@ssw0rd123!
-                role:
-                  enum:
-                  - admin
-                  - user
-                  - guest
-                  type: string
-                  description: User role
-                  example: admin
-                locale:
-                  type: string
-                  description: Locale (BCP 47)
-                  maxLength: 35
-                  example: en-US
-                timezone:
-                  type: string
-                  description: Timezone (IANA)
-                  maxLength: 64
-                  example: America/New_York
-              required:
-              - name
+              $ref: '#/components/schemas/users.v1.CreateUserRequest'
         required: true
       responses:
         default:
@@ -1586,22 +1019,27 @@ paths:
                   type: string
                   description: Timezone (IANA)
                   maxLength: 64
+                  example: America/New_York
                 updateMask:
                   type: string
                   description: Fields to update (if empty, all provided fields are applied)
                   format: field-mask
+                  example: name,email
                 name:
                   type: string
                   description: Display name
                   maxLength: 255
+                  example: John Doe
                 email:
                   type: string
                   description: Email address
                   maxLength: 254
+                  example: user@example.com
                 phone:
                   type: string
                   description: Phone number (E.164 format)
                   maxLength: 16
+                  example: '+1234567890'
                 role:
                   enum:
                   - admin
@@ -1609,6 +1047,7 @@ paths:
                   - guest
                   type: string
                   description: Authorization role (admin only)
+                  example: admin
                 status:
                   enum:
                   - pending
@@ -1617,10 +1056,12 @@ paths:
                   - deleted
                   type: string
                   description: Account status (admin only)
+                  example: pending
                 locale:
                   type: string
                   description: Locale (BCP 47)
                   maxLength: 35
+                  example: en-US
         required: true
       responses:
         '200':
@@ -1715,6 +1156,7 @@ paths:
                   description: File size in bytes (1 byte to 10 MB)
                   minimum: 1
                   maximum: 10485760
+                  example: 1
                 contentType:
                   type: string
                   description: MIME type of the image to upload
@@ -1722,6 +1164,7 @@ paths:
                   - image/jpeg
                   - image/png
                   - image/webp
+                  example: image/jpeg
               description: Request for presigned upload URL
               required:
               - contentType
@@ -1770,6 +1213,7 @@ paths:
                   minLength: 8
                   maxLength: 128
                   writeOnly: true
+                  example: P@ssw0rd123!
               required:
               - password
         required: true
@@ -1798,6 +1242,7 @@ components:
           - pending
           type: string
           description: Status of authentication attempt
+          example: success
         tokens:
           allOf:
           - $ref: '#/components/schemas/auth.v1.TokenPair'
@@ -1820,172 +1265,116 @@ components:
       description: |-
         Authentication result
          Returns tokens on success, or MFA challenge if second factor required
-    users.v1.User:
+    auth.v1.AuthenticateRequest:
       type: object
       properties:
-        id:
+        identifier:
+          type: string
+          description: Primary identifier (email or phone)
+          minLength: 1
+          maxLength: 254
+          example: user@example.com
+        identifierType:
+          enum:
+          - email
+          - phone
+          type: string
+          description: Type of identifier
+          example: email
+        password:
+          type: string
+          description: 'Password (NIST: min 8 chars, check against breach databases)'
+          minLength: 1
+          maxLength: 128
+          writeOnly: true
+          example: P@ssw0rd123!
+        installationId:
           type: string
           format: uuid
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
           example: 550e8400-e29b-41d4-a716-446655440000
-          description: User's unique identifier
-        name:
+          description: Installation ID for immediate session
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info for session
+      description: Unified authentication request supporting multiple identifier types
+      required:
+      - identifier
+      - password
+      - installationId
+      - clientInfo
+    auth.v1.ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
           type: string
-          description: Display name
-        email:
+          description: Current password for verification
+          minLength: 1
+          writeOnly: true
+          example: P@ssw0rd123!
+        newPassword:
           type: string
-          description: Email address
-        phone:
-          type: string
-          description: Phone number (E.164 format)
-        role:
-          enum:
-          - admin
-          - user
-          - guest
-          type: string
-          description: Authorization role
-        status:
-          enum:
-          - pending
-          - active
-          - suspended
-          - deleted
-          type: string
-          description: Account status
-        emailVerified:
-          type: boolean
-          description: Whether the email address has been verified
-        phoneVerified:
-          type: boolean
-          description: Whether the phone number has been verified
-        mfaEnabled:
-          type: boolean
-          description: Whether MFA is enabled for this account
-        hasPassword:
-          type: boolean
-          description: Whether the user has a password set (false for OAuth-only accounts)
-        avatarUrl:
-          type: string
-          description: Avatar image URL
-        locale:
-          type: string
-          description: Locale (BCP 47, e.g., `en-US`)
-        timezone:
-          type: string
-          description: Timezone (IANA, e.g., `America/New_York`)
-        createdAt:
-          type: string
-          description: Account creation timestamp
-          format: date-time
-          readOnly: true
-        updatedAt:
-          type: string
-          description: Last profile update timestamp
-          format: date-time
-          readOnly: true
-    auth.v1.SessionInfo:
+          description: New password
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+          example: N3wP@ssw0rd!456
+      description: Change password (requires current password)
+      required:
+      - currentPassword
+      - newPassword
+    auth.v1.ClientInfo:
       type: object
       properties:
         deviceId:
           type: string
-          description: Unique device identifier
+          description: Unique device/client identifier
+          minLength: 1
+          maxLength: 255
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
         deviceName:
           type: string
           description: Human-readable device name
+          maxLength: 255
+          example: iPhone 15 Pro
         deviceType:
           type: string
           description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+          maxLength: 50
+          example: mobile
         clientVersion:
           type: string
-          description: App version
-        ipAddress:
-          type: string
-          description: Last seen IP address (may be masked for privacy)
-        ipCountry:
-          type: string
-          description: ISO 3166-1 alpha-2 country code
-        createdAt:
-          type: string
-          description: Session creation timestamp
-          format: date-time
-          readOnly: true
-        lastSeenAt:
-          type: string
-          description: Last activity timestamp
-          format: date-time
-          readOnly: true
-        expiresAt:
-          type: string
-          description: Session expiration timestamp
-          format: date-time
-          readOnly: true
-        isCurrent:
-          type: boolean
-          description: True if this is the current session
-        ipCreatedBy:
-          type: string
-          description: IP address at session creation
-        activityCount:
-          type: integer
-          description: Number of token refreshes (activity indicator)
-          format: int32
+          description: App/client version
+          maxLength: 100
+          example: 1.0.0
         metadata:
           type: object
           additionalProperties:
             type: string
-          description: Session metadata (user agent, fingerprint, etc.)
-      description: Session information returned to clients
-    auth.v1.RevokeSessionsResponse:
+          description: Additional metadata (`device_model`, `os_info`, fingerprint, etc.)
+          example:
+            key: value
+      description: Client information sent with authentication requests
+      required:
+      - deviceId
+    auth.v1.ConfirmMfaSetupRequest:
       type: object
       properties:
-        revokedCount:
-          type: integer
-          description: Number of sessions revoked
-          format: int32
-      description: Response for revoking multiple sessions
-    users.v1.UserInfo:
-      type: object
-      properties:
-        id:
+        setupToken:
           type: string
-          format: uuid
-          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-          example: 550e8400-e29b-41d4-a716-446655440000
-          description: User's unique identifier
-        name:
+          description: Setup token from `SetupMfaReply`
+          minLength: 1
+          example: eyJhbGciOiJIUzI1NiIs...
+        code:
           type: string
-          description: Display name
-        email:
-          type: string
-          description: Email address
-        phone:
-          type: string
-          description: Phone number (E.164 format)
-        role:
-          enum:
-          - admin
-          - user
-          - guest
-          type: string
-          description: Authorization role
-        status:
-          enum:
-          - pending
-          - active
-          - suspended
-          - deleted
-          type: string
-          description: Account status
-        avatarUrl:
-          type: string
-          description: Avatar image URL
-        locale:
-          type: string
-          description: Locale (BCP 47, e.g., `en-US`)
-        timezone:
-          type: string
-          description: Timezone (IANA, e.g., `America/New_York`)
+          description: Verification code
+          minLength: 6
+          maxLength: 8
+      description: Confirm MFA setup
+      required:
+      - setupToken
+      - code
     auth.v1.ConfirmMfaSetupResponse:
       type: object
       properties:
@@ -1998,18 +1387,486 @@ components:
           - $ref: '#/components/schemas/auth.v1.MfaSetupError'
           description: Returned when setup verification fails
       description: MFA setup result
-    users.v1.GetAvatarUploadUrlResponse:
+    auth.v1.ConfirmVerificationRequest:
       type: object
       properties:
-        uploadUrl:
+        token:
           type: string
-          description: Presigned PUT URL for S3
-        expiresIn:
+          description: Verification token from email/SMS
+          minLength: 1
+          example: eyJhbGciOiJIUzI1NiIs...
+        type:
+          enum:
+          - email
+          - phone
+          type: string
+          description: Type of verification
+          example: email
+        installationId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: Installation ID for session creation
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info for session (enables auto-login after verification)
+      required:
+      - token
+      - type
+      - installationId
+      - clientInfo
+    auth.v1.DisableMfaRequest:
+      type: object
+      properties:
+        method:
+          enum:
+          - totp
+          - sms
+          - email
+          - recovery_code
+          type: string
+          description: Method to disable (or all if not specified)
+          example: totp
+        password:
+          type: string
+          description: |-
+            Current password for verification (OWASP: verify identity for sensitive
+             ops)
+          minLength: 1
+          writeOnly: true
+          example: P@ssw0rd123!
+      description: Disable MFA request
+      required:
+      - password
+    auth.v1.ExchangeOAuthCodeRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Authorization code from OAuth callback
+          minLength: 1
+        state:
+          type: string
+          description: State parameter from callback
+          minLength: 1
+        installationId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: Installation ID
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info
+      description: Exchange OAuth authorization code
+      required:
+      - code
+      - state
+      - installationId
+      - clientInfo
+    auth.v1.GetMfaStatusResponse:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether MFA is enabled
+          example: true
+        methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.MfaMethodStatus'
+          description: Configured MFA methods
+        recoveryCodesRemaining:
+          type: integer
+          description: Number of unused recovery codes remaining
+          format: int32
+          example: 0
+      description: MFA status for current user
+    auth.v1.GetOAuthUrlRequest:
+      type: object
+      properties:
+        provider:
+          enum:
+          - google
+          - github
+          - microsoft
+          - apple
+          - facebook
+          type: string
+          description: OAuth provider
+          example: google
+        redirectUri:
+          type: string
+          description: 'Optional: redirect URI override'
+          maxLength: 2048
+          example: https://example.com
+        scopes:
+          type: array
+          items:
+            type: string
+          description: 'Optional: additional scopes'
+        stateData:
+          type: string
+          description: 'Optional: state data to preserve across OAuth flow'
+          maxLength: 1024
+      description: Get OAuth authorization URL
+      required:
+      - provider
+    auth.v1.GetOAuthUrlResponse:
+      type: object
+      properties:
+        authorizationUrl:
+          type: string
+          description: Authorization URL to redirect user
+          example: https://example.com
+        state:
+          type: string
+          description: State parameter (for CSRF protection)
+      description: OAuth URL response
+    auth.v1.LinkOAuthProviderRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Authorization code from OAuth callback
+          minLength: 1
+        state:
+          type: string
+          description: State parameter
+          minLength: 1
+      description: Link OAuth provider to existing account
+      required:
+      - code
+      - state
+    auth.v1.LinkedProvider:
+      type: object
+      properties:
+        provider:
+          enum:
+          - google
+          - github
+          - microsoft
+          - apple
+          - facebook
+          type: string
+          description: OAuth provider type
+          example: google
+        providerUserId:
+          type: string
+          description: Provider's external user ID
+        email:
+          type: string
+          description: Email from provider (if available)
+          example: user@example.com
+        linkedAt:
+          type: string
+          description: Timestamp when the provider was linked
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+    auth.v1.ListLinkedProvidersResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.LinkedProvider'
+          description: List of linked OAuth providers for the current user
+      description: Linked OAuth providers response
+    auth.v1.ListSessionsRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: Active refresh token used to identify the current session
+          minLength: 1
+          example: eyJhbGciOiJIUzI1NiIs...
+      description: Request to list active sessions.
+      required:
+      - refreshToken
+    auth.v1.ListSessionsResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.SessionInfo'
+          description: Active sessions for the current user
+      description: Response for listing sessions
+    auth.v1.LockoutInfo:
+      type: object
+      properties:
+        retryAfter:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
-          description: URL expiration in seconds
+          description: Duration until account is unlocked
           example: 300s
-      description: Response with presigned URL for direct S3 upload
+        failedAttempts:
+          type: integer
+          description: Number of failed attempts
+          format: int32
+          example: 0
+        maxAttempts:
+          type: integer
+          description: Maximum attempts before lockout (configurable)
+          format: int32
+          example: 0
+        lockedUntil:
+          type: string
+          description: Lockout timestamp
+          format: date-time
+          example: 2026-01-15T09:30:00Z
+      description: Account lockout information
+    auth.v1.MfaChallenge:
+      type: object
+      properties:
+        challengeToken:
+          type: string
+          description: Token to correlate MFA verification with original auth attempt
+          example: eyJhbGciOiJIUzI1NiIs...
+        availableMethods:
+          type: array
+          items:
+            $ref: '#/components/schemas/auth.v1.MfaMethodInfo'
+          description: Available MFA methods for this user
+        expiresAt:
+          type: string
+          description: Challenge expiration - typically 5 minutes
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+      description: MFA challenge - returned when second factor is required
+    auth.v1.MfaMethodInfo:
+      type: object
+      properties:
+        method:
+          enum:
+          - totp
+          - sms
+          - email
+          - recovery_code
+          type: string
+          description: MFA method type
+          example: totp
+        hint:
+          type: string
+          description: Masked hint (e.g., "***-***-1234" for SMS, "john***@gm***.com" for email)
+        isDefault:
+          type: boolean
+          description: True if this is the user's preferred/default method
+          example: true
+      description: Information about an available MFA method
+    auth.v1.MfaMethodStatus:
+      type: object
+      properties:
+        method:
+          enum:
+          - totp
+          - sms
+          - email
+          - recovery_code
+          type: string
+          description: MFA method type
+          example: totp
+        enabled:
+          type: boolean
+          description: Whether this method is currently active
+          example: true
+        hint:
+          type: string
+          description: Masked hint for this method
+        configuredAt:
+          type: string
+          description: When this method was configured
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+      description: Status of a configured MFA method
+    auth.v1.MfaSetupError:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code
+    auth.v1.MfaSetupSuccess:
+      type: object
+      properties:
+        recoveryCodes:
+          type: array
+          items:
+            type: string
+          description: One-time recovery codes — save securely, each can be used exactly once
+      description: Recovery codes (only returned on first MFA enrollment, display once!)
+    auth.v1.RecoveryConfirmRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Recovery token from email/SMS
+          minLength: 1
+          example: eyJhbGciOiJIUzI1NiIs...
+        newPassword:
+          type: string
+          description: 'New password (NIST: min 8 chars with MFA, min 15 without)'
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+          example: N3wP@ssw0rd!456
+      description: Confirm recovery and set new password
+      required:
+      - token
+      - newPassword
+    auth.v1.RecoveryStartRequest:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: Email or phone number (used to look up account)
+          minLength: 1
+          maxLength: 254
+          example: user@example.com
+        identifierType:
+          enum:
+          - email
+          - phone
+          type: string
+          description: Identifier type (email or phone)
+          example: email
+        idempotencyKey:
+          type: string
+          description: |-
+            Client-generated idempotency key (UUID v4 recommended).
+             Prevents duplicate recovery emails on network retries.
+          maxLength: 64
+          example: 550e8400-e29b-41d4-a716-446655440000
+      description: |-
+        Start account recovery (password reset)
+         Always returns success to prevent user enumeration (OWASP)
+      required:
+      - identifier
+    auth.v1.RefreshTokensRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: Refresh token to exchange for a new token pair
+          minLength: 1
+          example: eyJhbGciOiJIUzI1NiIs...
+      required:
+      - refreshToken
+    auth.v1.RequestVerificationRequest:
+      type: object
+      properties:
+        type:
+          enum:
+          - email
+          - phone
+          type: string
+          description: Type of verification
+          example: email
+      required:
+      - type
+    auth.v1.RevokeSessionsResponse:
+      type: object
+      properties:
+        revokedCount:
+          type: integer
+          description: Number of sessions revoked
+          format: int32
+          example: 0
+      description: Response for revoking multiple sessions
+    auth.v1.SessionInfo:
+      type: object
+      properties:
+        deviceId:
+          type: string
+          description: Unique device identifier
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        deviceName:
+          type: string
+          description: Human-readable device name
+          example: iPhone 15 Pro
+        deviceType:
+          type: string
+          description: 'Device type: ''mobile'', ''tablet'', ''desktop'', ''web'', ''unknown'''
+          example: mobile
+        clientVersion:
+          type: string
+          description: App version
+          example: 1.0.0
+        ipAddress:
+          type: string
+          description: Last seen IP address (may be masked for privacy)
+          example: 192.168.1.1
+        ipCountry:
+          type: string
+          description: ISO 3166-1 alpha-2 country code
+          example: US
+        createdAt:
+          type: string
+          description: Session creation timestamp
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+        lastSeenAt:
+          type: string
+          description: Last activity timestamp
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+        expiresAt:
+          type: string
+          description: Session expiration timestamp
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+        isCurrent:
+          type: boolean
+          description: True if this is the current session
+          example: true
+        ipCreatedBy:
+          type: string
+          description: IP address at session creation
+          example: 192.168.1.1
+        activityCount:
+          type: integer
+          description: Number of token refreshes (activity indicator)
+          format: int32
+          example: 0
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Session metadata (user agent, fingerprint, etc.)
+          example:
+            key: value
+      description: Session information returned to clients
+    auth.v1.SetupMfaRequest:
+      type: object
+      properties:
+        method:
+          enum:
+          - totp
+          - sms
+          - email
+          - recovery_code
+          type: string
+          description: Method to set up
+          example: totp
+        identifier:
+          type: string
+          description: 'For SMS/Email: the phone/email to use (must be verified)'
+          maxLength: 254
+          example: user@example.com
+      description: Request to set up MFA
+      required:
+      - method
     auth.v1.SetupMfaResponse:
       type: object
       properties:
@@ -2019,17 +1876,20 @@ components:
         provisioningUri:
           type: string
           description: 'For TOTP: otpauth:// URI for QR code generation'
+          example: https://example.com
         maskedDestination:
           type: string
           description: 'For SMS/Email: masked destination where code was sent'
         setupToken:
           type: string
           description: Setup token to correlate with `ConfirmMfaSetup`
+          example: eyJhbGciOiJIUzI1NiIs...
         expiresAt:
           type: string
           description: Setup expires at
           format: date-time
           readOnly: true
+          example: 2026-01-15T09:30:00Z
       description: MFA setup response
     rest.v1.ErrorResponse:
       type: object
@@ -2054,91 +1914,88 @@ components:
               type: string
               description: gRPC status code name (e.g., INVALID_ARGUMENT).
       description: REST error response envelope.
-    auth.v1.GetMfaStatusResponse:
+    auth.v1.SignUpRequest:
       type: object
       properties:
-        enabled:
-          type: boolean
-          description: Whether MFA is enabled
-        methods:
-          type: array
-          items:
-            $ref: '#/components/schemas/auth.v1.MfaMethodStatus'
-          description: Configured MFA methods
-        recoveryCodesRemaining:
-          type: integer
-          description: Number of unused recovery codes remaining
-          format: int32
-      description: MFA status for current user
-    operations.v1.CheckResult:
-      type: object
-      properties:
-        status:
+        identifier:
+          type: string
+          description: User identifier (email or phone in E.164 format)
+          minLength: 1
+          maxLength: 254
+          example: user@example.com
+        identifierType:
           enum:
-          - healthy
-          - unhealthy
+          - email
+          - phone
           type: string
-          description: Component health.
-        message:
+          description: Type of identifier (auto-detected if not specified based on format)
+          example: email
+        password:
           type: string
-          description: Error detail — present only when status is HEALTH_STATUS_UNHEALTHY.
-      description: Individual dependency check result.
-    auth.v1.GetOAuthUrlResponse:
-      type: object
-      properties:
-        authorizationUrl:
+          description: Password
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+          example: P@ssw0rd123!
+        displayName:
           type: string
-          description: Authorization URL to redirect user
-        state:
+          description: Display name
+          minLength: 1
+          maxLength: 255
+          example: John Doe
+        installationId:
           type: string
-          description: State parameter (for CSRF protection)
-      description: OAuth URL response
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: Unique installation/app instance ID
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client/device information for session (stored in sessions table)
+        locale:
+          type: string
+          description: Locale (BCP 47, e.g., `en-US`)
+          maxLength: 35
+          example: en-US
+        timezone:
+          type: string
+          description: Timezone (IANA, e.g., `America/New_York`)
+          maxLength: 64
+          example: America/New_York
+        idempotencyKey:
+          type: string
+          description: |-
+            Client-generated idempotency key (UUID v4 recommended).
+             Guarantees at-most-once execution for retries on network failures.
+             Server ignores the request body if a matching key was already processed
+             and returns the original response.
+          maxLength: 64
+          example: 550e8400-e29b-41d4-a716-446655440000
+      description: Register a new user account
+      required:
+      - identifier
+      - password
+      - displayName
+      - installationId
+      - clientInfo
     auth.v1.TokenPair:
       type: object
       properties:
         accessToken:
           type: string
           description: Short-lived JWT for authenticating API requests
+          example: eyJhbGciOiJIUzI1NiIs...
         refreshToken:
           type: string
           description: Long-lived opaque token used to obtain a new token pair
+          example: eyJhbGciOiJIUzI1NiIs...
         expiresAt:
           type: string
           description: Access token expiration timestamp
           format: date-time
           readOnly: true
-    auth.v1.LinkedProvider:
-      type: object
-      properties:
-        provider:
-          enum:
-          - google
-          - github
-          - microsoft
-          - apple
-          - facebook
-          type: string
-          description: OAuth provider type
-        providerUserId:
-          type: string
-          description: Provider's external user ID
-        email:
-          type: string
-          description: Email from provider (if available)
-        linkedAt:
-          type: string
-          description: Timestamp when the provider was linked
-          format: date-time
-          readOnly: true
-    auth.v1.ListLinkedProvidersResponse:
-      type: object
-      properties:
-        providers:
-          type: array
-          items:
-            $ref: '#/components/schemas/auth.v1.LinkedProvider'
-          description: List of linked OAuth providers for the current user
-      description: Linked OAuth providers response
+          example: 2026-01-15T09:30:00Z
     auth.v1.UserSnapshot:
       type: object
       properties:
@@ -2151,12 +2008,15 @@ components:
         displayName:
           type: string
           description: Display name
+          example: John Doe
         email:
           type: string
           description: Email address
+          example: user@example.com
         phone:
           type: string
           description: Phone number (E.164 format)
+          example: '+1234567890'
         role:
           enum:
           - admin
@@ -2164,6 +2024,7 @@ components:
           - guest
           type: string
           description: Authorization role
+          example: admin
         status:
           enum:
           - pending
@@ -2172,15 +2033,19 @@ components:
           - deleted
           type: string
           description: Account status
+          example: pending
         emailVerified:
           type: boolean
           description: Whether the email address has been verified
+          example: true
         phoneVerified:
           type: boolean
           description: Whether the phone number has been verified
+          example: true
         mfaEnabled:
           type: boolean
           description: Whether MFA is enabled for this account
+          example: true
         linkedProviders:
           type: array
           items:
@@ -2192,130 +2057,201 @@ components:
             - facebook
             type: string
           description: Linked OAuth providers
+          example:
+          - google
         avatarUrl:
           type: string
           description: User's avatar URL
+          example: https://example.com
         hasPassword:
           type: boolean
           description: Whether the user has a password set (false for OAuth-only accounts)
+          example: true
       description: Info returned on successful auth
-    auth.v1.ListSessionsResponse:
-      type: object
-      properties:
-        sessions:
-          type: array
-          items:
-            $ref: '#/components/schemas/auth.v1.SessionInfo'
-          description: Active sessions for the current user
-      description: Response for listing sessions
-    auth.v1.LockoutInfo:
-      type: object
-      properties:
-        retryAfter:
-          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
-          type: string
-          description: Duration until account is unlocked
-          example: 300s
-        failedAttempts:
-          type: integer
-          description: Number of failed attempts
-          format: int32
-        maxAttempts:
-          type: integer
-          description: Maximum attempts before lockout (configurable)
-          format: int32
-        lockedUntil:
-          type: string
-          description: Lockout timestamp
-          format: date-time
-      description: Account lockout information
-    auth.v1.MfaChallenge:
-      type: object
-      properties:
-        challengeToken:
-          type: string
-          description: Token to correlate MFA verification with original auth attempt
-        availableMethods:
-          type: array
-          items:
-            $ref: '#/components/schemas/auth.v1.MfaMethodInfo'
-          description: Available MFA methods for this user
-        expiresAt:
-          type: string
-          description: Challenge expiration - typically 5 minutes
-          format: date-time
-          readOnly: true
-      description: MFA challenge - returned when second factor is required
-    auth.v1.MfaMethodInfo:
-      type: object
-      properties:
-        method:
-          enum:
-          - totp
-          - sms
-          - email
-          - recovery_code
-          type: string
-          description: MFA method type
-        hint:
-          type: string
-          description: Masked hint (e.g., "***-***-1234" for SMS, "john***@gm***.com" for email)
-        isDefault:
-          type: boolean
-          description: True if this is the user's preferred/default method
-      description: Information about an available MFA method
-    auth.v1.MfaMethodStatus:
-      type: object
-      properties:
-        method:
-          enum:
-          - totp
-          - sms
-          - email
-          - recovery_code
-          type: string
-          description: MFA method type
-        enabled:
-          type: boolean
-          description: Whether this method is currently active
-        hint:
-          type: string
-          description: Masked hint for this method
-        configuredAt:
-          type: string
-          description: When this method was configured
-          format: date-time
-          readOnly: true
-      description: Status of a configured MFA method
-    auth.v1.MfaSetupError:
-      type: object
-      properties:
-        message:
-          type: string
-          description: Human-readable error message
-        code:
-          type: string
-          description: Machine-readable error code
-    auth.v1.MfaSetupSuccess:
-      type: object
-      properties:
-        recoveryCodes:
-          type: array
-          items:
-            type: string
-          description: One-time recovery codes — save securely, each can be used exactly once
-      description: Recovery codes (only returned on first MFA enrollment, display once!)
     auth.v1.ValidateCredentialsResponse:
       type: object
       properties:
         valid:
           type: boolean
           description: Whether the current session credentials are valid
+          example: true
         user:
           allOf:
           - $ref: '#/components/schemas/auth.v1.UserSnapshot'
           description: Authenticated user info (populated when valid is true)
-    operations.v1.HealthResponse:
+    auth.v1.VerifyMfaRequest:
+      type: object
+      properties:
+        challengeToken:
+          type: string
+          description: Challenge token from MfaChallenge
+          minLength: 1
+          example: eyJhbGciOiJIUzI1NiIs...
+        method:
+          enum:
+          - totp
+          - sms
+          - email
+          - recovery_code
+          type: string
+          description: Method used for verification
+          example: totp
+        code:
+          type: string
+          description: Verification code (6-digit TOTP, SMS code, recovery code, etc.)
+          minLength: 6
+          maxLength: 32
+        clientInfo:
+          allOf:
+          - $ref: '#/components/schemas/auth.v1.ClientInfo'
+          description: Client info for session creation
+      description: Verify MFA code to complete authentication
+      required:
+      - challengeToken
+      - method
+      - code
+    users.v1.UserInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: User's unique identifier
+        name:
+          type: string
+          description: Display name
+          example: John Doe
+        email:
+          type: string
+          description: Email address
+          example: user@example.com
+        phone:
+          type: string
+          description: Phone number (E.164 format)
+          example: '+1234567890'
+        role:
+          enum:
+          - admin
+          - user
+          - guest
+          type: string
+          description: Authorization role
+          example: admin
+        status:
+          enum:
+          - pending
+          - active
+          - suspended
+          - deleted
+          type: string
+          description: Account status
+          example: pending
+        avatarUrl:
+          type: string
+          description: Avatar image URL
+          example: https://example.com
+        locale:
+          type: string
+          description: Locale (BCP 47, e.g., `en-US`)
+          example: en-US
+        timezone:
+          type: string
+          description: Timezone (IANA, e.g., `America/New_York`)
+          example: America/New_York
+    users.v1.User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: User's unique identifier
+        name:
+          type: string
+          description: Display name
+          example: John Doe
+        email:
+          type: string
+          description: Email address
+          example: user@example.com
+        phone:
+          type: string
+          description: Phone number (E.164 format)
+          example: '+1234567890'
+        role:
+          enum:
+          - admin
+          - user
+          - guest
+          type: string
+          description: Authorization role
+          example: admin
+        status:
+          enum:
+          - pending
+          - active
+          - suspended
+          - deleted
+          type: string
+          description: Account status
+          example: pending
+        emailVerified:
+          type: boolean
+          description: Whether the email address has been verified
+          example: true
+        phoneVerified:
+          type: boolean
+          description: Whether the phone number has been verified
+          example: true
+        mfaEnabled:
+          type: boolean
+          description: Whether MFA is enabled for this account
+          example: true
+        hasPassword:
+          type: boolean
+          description: Whether the user has a password set (false for OAuth-only accounts)
+          example: true
+        avatarUrl:
+          type: string
+          description: Avatar image URL
+          example: https://example.com
+        locale:
+          type: string
+          description: Locale (BCP 47, e.g., `en-US`)
+          example: en-US
+        timezone:
+          type: string
+          description: Timezone (IANA, e.g., `America/New_York`)
+          example: America/New_York
+        createdAt:
+          type: string
+          description: Account creation timestamp
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+        updatedAt:
+          type: string
+          description: Last profile update timestamp
+          format: date-time
+          readOnly: true
+          example: 2026-01-15T09:30:00Z
+    users.v1.GetAvatarUploadUrlResponse:
+      type: object
+      properties:
+        uploadUrl:
+          type: string
+          description: Presigned PUT URL for S3
+          example: https://example.com
+        expiresIn:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: URL expiration in seconds
+          example: 300s
+      description: Response with presigned URL for direct S3 upload
+    operations.v1.CheckResult:
       type: object
       properties:
         status:
@@ -2323,15 +2259,12 @@ components:
           - healthy
           - unhealthy
           type: string
-          description: Overall service health.
-        version:
+          description: Component health.
+          example: healthy
+        message:
           type: string
-          description: Service version from Cargo.toml (e.g. "0.1.0").
-        checks:
-          allOf:
-          - $ref: '#/components/schemas/operations.v1.HealthChecks'
-          description: Dependency health checks.
-      description: Readiness check response with component health.
+          description: Error detail — present only when status is HEALTH_STATUS_UNHEALTHY.
+      description: Individual dependency check result.
     operations.v1.HealthChecks:
       type: object
       properties:
@@ -2346,6 +2279,70 @@ components:
             S3 storage connectivity check.
              Omitted from JSON when S3 is not configured.
       description: Component health check results.
+    operations.v1.HealthResponse:
+      type: object
+      properties:
+        status:
+          enum:
+          - healthy
+          - unhealthy
+          type: string
+          description: Overall service health.
+          example: healthy
+        version:
+          type: string
+          description: Service version from Cargo.toml (e.g. "0.1.0").
+          example: 1.0.0
+        checks:
+          allOf:
+          - $ref: '#/components/schemas/operations.v1.HealthChecks'
+          description: Dependency health checks.
+      description: Readiness check response with component health.
+    users.v1.CreateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Display name
+          minLength: 1
+          maxLength: 255
+          example: John Doe
+        email:
+          type: string
+          description: Email (optional if phone is provided)
+          maxLength: 254
+          example: user@example.com
+        phone:
+          type: string
+          description: Phone in E.164 format (optional if email is provided)
+          maxLength: 16
+          example: '+1234567890'
+        password:
+          type: string
+          description: Password (optional for OAuth-only accounts)
+          maxLength: 128
+          writeOnly: true
+          example: P@ssw0rd123!
+        role:
+          enum:
+          - admin
+          - user
+          - guest
+          type: string
+          description: User role
+          example: admin
+        locale:
+          type: string
+          description: Locale (BCP 47)
+          maxLength: 35
+          example: en-US
+        timezone:
+          type: string
+          description: Timezone (IANA)
+          maxLength: 64
+          example: America/New_York
+      required:
+      - name
   securitySchemes:
     bearerAuth:
       type: http
