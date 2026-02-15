@@ -98,13 +98,8 @@ services:
         # Auth service (gRPC + gRPC-Web + REST on single port)
         ####################################################################
         - traefik.enable=true
-        - traefik.http.routers.auth-service.entrypoints=https
-        - traefik.http.routers.auth-service.rule=Host(`auth-demo-api.${DOMAIN}`)
-        - traefik.http.routers.auth-service.tls=true
-        - traefik.http.routers.auth-service.tls.certresolver=le
 
-        # Service: h2c for HTTP/2 cleartext (internal)
-        - traefik.http.routers.auth-service.service=auth-service
+        # Shared service: h2c for HTTP/2 cleartext (internal)
         - traefik.http.services.auth-service.loadbalancer.server.port=8000
         - traefik.http.services.auth-service.loadbalancer.server.scheme=h2c
 
@@ -112,7 +107,21 @@ services:
         - traefik.http.services.auth-service.loadbalancer.healthcheck.path=/health
         - traefik.http.services.auth-service.loadbalancer.healthcheck.interval=10s
 
-        # Middleware chain (security must run before grpcweb for CORS headers)
+        # Router: REST endpoints (Swagger, health, API docs — no gRPC-Web)
+        - traefik.http.routers.auth-rest.entrypoints=https
+        - traefik.http.routers.auth-rest.rule=Host(`auth-demo-api.${DOMAIN}`) && (PathPrefix(`/swagger-ui`) || PathPrefix(`/api-docs`) || PathPrefix(`/health`) || PathPrefix(`/metrics`) || PathPrefix(`/v1/`))
+        - traefik.http.routers.auth-rest.priority=200
+        - traefik.http.routers.auth-rest.tls=true
+        - traefik.http.routers.auth-rest.tls.certresolver=le
+        - traefik.http.routers.auth-rest.service=auth-service
+        - traefik.http.routers.auth-rest.middlewares=auth-service-cors@swarm,auth-service-security@swarm,auth-service-ratelimit@swarm
+
+        # Router: gRPC + gRPC-Web (catch-all for remaining paths)
+        - traefik.http.routers.auth-service.entrypoints=https
+        - traefik.http.routers.auth-service.rule=Host(`auth-demo-api.${DOMAIN}`)
+        - traefik.http.routers.auth-service.tls=true
+        - traefik.http.routers.auth-service.tls.certresolver=le
+        - traefik.http.routers.auth-service.service=auth-service
         - traefik.http.routers.auth-service.middlewares=auth-service-cors@swarm,auth-service-grpcweb@swarm,auth-service-security@swarm,auth-service-ratelimit@swarm
 
         # Middleware: gRPC-Web (converts browser requests to gRPC, CORS handled separately)
@@ -233,13 +242,11 @@ volumes:
 
 # Docker Swarm secrets (create with: docker secret create <name> <file>)
 secrets:
-  jwt_secret_key:
+  light-auth-jwt-secret-key:
     external: true
-  db_password:
+  light-auth-db-password:
     external: true
-  s3_secret_access_key:
+  s3-secret-access-key:
     external: true
-  smtp_password:
-    external: true
-  mailjet_api_secret:
+  mailjet-api-secret:
     external: true

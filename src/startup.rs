@@ -249,11 +249,12 @@ pub async fn build_app(
         // Content-based ETag for efficient revalidation (Cache-Control: no-cache).
         // Browsers always revalidate with If-None-Match, getting 304 when unchanged.
         // Hash-based ETag detects spec changes even when the version hasn't bumped.
+        // Uses SHA-256 (via TokenGenerator) for a stable, deterministic hash
+        // that won't change across Rust versions (unlike DefaultHasher).
         let etag: Arc<str> = {
-            use std::hash::{DefaultHasher, Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            spec_yaml.hash(&mut h);
-            format!("\"spec-{}\"", h.finish())
+            let hash = auth_core::TokenGenerator::hash_token(&spec_yaml);
+            let short = u64::from_be_bytes(hash[..8].try_into().expect("SHA-256 is 32 bytes"));
+            format!("\"spec-{short:x}\"")
         }
         .into();
 
@@ -316,7 +317,13 @@ fn init_s3(config: &Config) -> Option<Arc<S3Storage>> {
     let secret = config.s3_secret_access_key();
     if let (Some(url), Some(key), Some(secret)) = (&config.s3_url, &config.s3_access_key_id, secret)
     {
-        let s3_config = S3Config::from_url(url, key.clone(), secret).expect("Invalid S3 URL");
+        let s3_config = match S3Config::from_url(url, key.clone(), secret) {
+            Ok(config) => config,
+            Err(e) => {
+                warn!(error = %e, "Invalid S3 URL, storage disabled");
+                return None;
+            }
+        };
         Some(Arc::new(S3Storage::new(s3_config)))
     } else {
         info!("S3 not configured");

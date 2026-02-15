@@ -163,6 +163,9 @@ impl AuthService {
     ) -> Result<(), Status> {
         req.validate_or_status()?;
 
+        // Domain validation beyond proto rules (letter + digit requirement)
+        domain::validate_password(&req.new_password)?;
+
         debug!(user_id = %user_id, "Password change requested");
 
         let user = self

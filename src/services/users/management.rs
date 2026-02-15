@@ -270,6 +270,18 @@ impl UserService {
             &existing.timezone
         };
 
+        // Reset verification flags when email/phone changes
+        let email_verified = if email.as_deref() == existing.email.as_deref() {
+            existing.email_verified
+        } else {
+            false
+        };
+        let phone_verified = if phone.as_deref() == existing.phone.as_deref() {
+            existing.phone_verified
+        } else {
+            false
+        };
+
         self.ctx
             .db()
             .users
@@ -277,9 +289,9 @@ impl UserService {
                 id: user_id,
                 role,
                 email: email.as_deref(),
-                email_verified: existing.email_verified,
+                email_verified,
                 phone: phone.as_deref(),
-                phone_verified: existing.phone_verified,
+                phone_verified,
                 status,
             })
             .await

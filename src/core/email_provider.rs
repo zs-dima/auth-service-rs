@@ -70,11 +70,11 @@ impl EmailProvider {
         match self {
             Self::Smtp(_service) => {
                 // TODO: Implement SMTP welcome email template
-                tracing::warn!(
+                tracing::error!(
                     to_email,
-                    "SMTP welcome email template not implemented, skipping"
+                    "SMTP welcome email template not implemented"
                 );
-                Ok(())
+                Err("SMTP welcome email template not implemented".into())
             }
             Self::Mailjet(service) => service
                 .send_welcome(
@@ -102,11 +102,11 @@ impl EmailProvider {
         match self {
             Self::Smtp(_service) => {
                 // TODO: Implement SMTP email verification template
-                tracing::warn!(
+                tracing::error!(
                     to_email,
-                    "SMTP email verification template not implemented, skipping"
+                    "SMTP email verification template not implemented"
                 );
-                Ok(())
+                Err("SMTP email verification template not implemented".into())
             }
             Self::Mailjet(service) => service
                 .send_email_verification(to_email, to_name, verification_url)
@@ -119,7 +119,6 @@ impl EmailProvider {
     ///
     /// # Errors
     /// Returns an error if the email fails to send.
-    #[allow(dead_code)]
     pub async fn send_password_changed(
         &self,
         to_email: &str,
@@ -128,11 +127,11 @@ impl EmailProvider {
         match self {
             Self::Smtp(_service) => {
                 // TODO: Implement SMTP password changed email template
-                tracing::warn!(
+                tracing::error!(
                     to_email,
-                    "SMTP password changed template not implemented, skipping"
+                    "SMTP password changed template not implemented"
                 );
-                Ok(())
+                Err("SMTP password changed template not implemented".into())
             }
             Self::Mailjet(service) => service
                 .send_password_changed(to_email, to_name)
