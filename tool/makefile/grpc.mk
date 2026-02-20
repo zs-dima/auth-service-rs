@@ -23,9 +23,9 @@ proto-breaking:
 proto-sync:
 	@echo "Syncing proto dependencies from BSR..."
 	buf dep update
-	buf export buf.build/googleapis/googleapis --output api/proto --path google/api/annotations.proto --path google/api/http.proto --path google/api/httpbody.proto
-	buf export buf.build/envoyproxy/protoc-gen-validate --output api/proto --path validate/validate.proto
-	@echo "Proto dependencies synced from BSR"
+	buf export buf.build/googleapis/googleapis --output api/proto/.deps --path google/api/annotations.proto --path google/api/http.proto --path google/api/httpbody.proto
+	buf export buf.build/envoyproxy/protoc-gen-validate --output api/proto/.deps --path validate/validate.proto
+	@echo "Proto dependencies synced to api/proto/.deps/"
 
 # Generate OpenAPI 3.1 spec from proto files with google.api.http annotations.
 #

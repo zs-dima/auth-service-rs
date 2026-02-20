@@ -2,21 +2,23 @@ use tonic_rest_build::{
     RestCodegenConfig, configure_prost_serde, dump_file_descriptor_set, generate,
 };
 
-/// Proto source files to compile (derived from `PROTO_INCLUDES`).
+/// Proto source files to compile (resolved via `PROTO_INCLUDES`).
 const PROTO_FILES: &[&str] = &[
-    "../../api/proto/auth.proto",
-    "../../api/proto/users.proto",
-    "../../api/proto/core.proto",
-    "../../api/proto/operations.proto",
+    "../../api/proto/auth/v1/auth.proto",
+    "../../api/proto/users/v1/users.proto",
+    "../../api/proto/core/v1/core.proto",
+    "../../api/proto/operations/v1/operations.proto",
 ];
-const PROTO_INCLUDES: &[&str] = &["../../api/proto"];
+/// Include paths: module root (for package-path imports like `core/v1/core.proto`)
+/// and `.deps` (for vendored `google/api/*` and `validate/*`).
+const PROTO_INCLUDES: &[&str] = &["../../api/proto", "../../api/proto/.deps"];
 
 /// Additional proto files that are imported but not compiled directly.
 /// Changes to these also trigger a rebuild.
 const PROTO_DEPS: &[&str] = &[
-    "../../api/proto/validate/validate.proto",
-    "../../api/proto/google/api/annotations.proto",
-    "../../api/proto/google/api/http.proto",
+    "../../api/proto/.deps/validate/validate.proto",
+    "../../api/proto/.deps/google/api/annotations.proto",
+    "../../api/proto/.deps/google/api/http.proto",
 ];
 
 /// Maps proto enum FQN → `serde_wkt` module name for JSON string serialization.

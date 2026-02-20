@@ -10,7 +10,7 @@ import "google/protobuf/timestamp.proto";
 import "google/api/annotations.proto";
 import "validate/validate.proto";
 
-import "core.proto";
+import "core/v1/core.proto";
 
 // =============================================================================
 // Auth Service - Authentication, MFA, OAuth, Sessions

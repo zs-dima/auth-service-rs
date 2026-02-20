@@ -11,7 +11,7 @@ import "google/protobuf/timestamp.proto";
 import "google/api/annotations.proto";
 import "validate/validate.proto";
 
-import "core.proto";
+import "core/v1/core.proto";
 
 // User Service - User CRUD, avatars, admin functions
 service UserService {
